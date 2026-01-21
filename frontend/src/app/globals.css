@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+}
+
+/* Animations */
+.reveal-hidden {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+
+.reveal-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+/* Signature Motion: Border Scan */
+@keyframes border-scan {
+  0% {
+    border-image-source: linear-gradient(90deg, transparent 0%, rgba(16, 185, 129, 0.5) 50%, transparent 100%);
+  }
+
+  100% {
+    border-image-source: linear-gradient(90deg, transparent 100%, rgba(16, 185, 129, 0.5) 150%, transparent 200%);
+  }
+}
+
+.border-scan {
+  border-left: 2px solid;
+  border-image-slice: 1;
+  animation: border-scan 2s linear infinite;
+}
+
+/* Sub-perceptual Drift */
+@keyframes subtle-drift {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-subtle-drift {
+  background-size: 200% 200%;
+  animation: subtle-drift 120s ease infinite;
+}
+
+/* Onboarding: Alive but Silent */
+@keyframes drift {
+  0% {
+    background-position: 0% 0%;
+  }
+
+  50% {
+    background-position: 100% 100%;
+  }
+
+  100% {
+    background-position: 0% 0%;
+  }
+}
+
+/* --- JONY IVE UPGRADE: AMBIENT INTELLIGENCE --- */
+
+/* 1. Noise Grain Overlay (3% opacity) */
+.bg-noise {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='1'/%3E%3C/svg%3E");
+}
+
+/* 2. Slow Vignette Breathe (20s loop) */
+@keyframes vignette-breathe {
+
+  0%,
+  100% {
+    background: radial-gradient(circle at 50% 50%, transparent 60%, rgba(0, 0, 0, 0.4) 100%);
+  }
+
+  50% {
+    background: radial-gradient(circle at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
+  }
+}
+
+.animate-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  border-radius: inherit;
+  /* If used inside a container */
+  animation: vignette-breathe 20s ease-in-out infinite;
+}
+
+/* 3. Deep Gradient Drift (30s loop) */
+@keyframes aurora-drift {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.bg-alive {
+  background: linear-gradient(280deg, #0a0c10 0%, #0e1218 40%, #0a0c10 100%);
+  background-size: 200% 200%;
+  animation: aurora-drift 30s ease infinite;
+}
