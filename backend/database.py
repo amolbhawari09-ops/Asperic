@@ -5,8 +5,12 @@ class SupabaseMemory:
     def __init__(self):
         # REPLACE THESE WITH YOUR ACTUAL SUPABASE KEYS
         # In Antigravity, set these in your Environment Variables or paste them here temporarily
-        url = os.getenv("SUPABASE_URL", "https://jvaoecdczvkbmiwbdwxo.supabase.co")
-        key = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2YW9lY2RjenZrYm1pd2Jkd3hvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg0MzY2MDgsImV4cCI6MjA4NDAxMjYwOH0.L9WJuc3feQXoh3oheqe-wdoMiXN53HMv1QxNBhugf48")
+      url = os.getenv("SUPABASE_URL")
+key = os.getenv("SUPABASE_KEY")
+
+if not url or not key:
+    raise EnvironmentError("SUPABASE env vars missing")
+
         self.supabase: Client = create_client(url, key)
 
     def get_history(self, chat_id):
