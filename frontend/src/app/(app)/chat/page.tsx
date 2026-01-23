@@ -8,6 +8,8 @@ import {
     MessageSquare,
     Database,
     Settings,
+    Menu,
+    X,
 } from "lucide-react";
 
 /* ---------------- TYPES ---------------- */
@@ -41,6 +43,9 @@ export default function ChatPage() {
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
+
+    // 🔹 MOBILE SIDEBAR STATE (NEW)
+    const [sidebarOpen, setSidebarOpen] = useState(false);
 
     /* ------------ AUTH CHECK ------------ */
 
@@ -105,6 +110,7 @@ export default function ChatPage() {
         setChats(prev => [data, ...prev]);
         setActiveChatId(data.id);
         setMessages([]);
+        setSidebarOpen(false); // 🔹 close sidebar on mobile
     };
 
     /* ---------- FETCH MESSAGES ---------- */
@@ -125,36 +131,6 @@ export default function ChatPage() {
         loadMessages();
     }, [activeChatId]);
 
-    /* -------- AUTO TITLE LOGIC -------- */
-
-    const generateChatTitle = (text: string) => {
-        return text
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 60);
-    };
-
-    const maybeUpdateChatTitle = async (chatId: string, content: string) => {
-        const chat = chats.find(c => c.id === chatId);
-        if (!chat) return;
-        if (chat.title !== "New Session") return;
-
-        const newTitle = generateChatTitle(content);
-
-        const { error } = await supabase
-            .from("chats")
-            .update({ title: newTitle })
-            .eq("id", chatId);
-
-        if (!error) {
-            setChats(prev =>
-                prev.map(c =>
-                    c.id === chatId ? { ...c, title: newTitle } : c
-                )
-            );
-        }
-    };
-
     /* ------------ SEND MESSAGE ------------ */
 
     const sendMessage = async () => {
@@ -171,8 +147,6 @@ export default function ChatPage() {
                 role: "user",
                 content,
             });
-
-            await maybeUpdateChatTitle(activeChatId, content);
 
             const { data } = await supabase
                 .from("messages")
@@ -221,9 +195,24 @@ export default function ChatPage() {
     /* ---------------- UI ---------------- */
 
     return (
-        <div className="flex h-screen bg-black text-gray-200">
+        <div className="flex h-screen bg-black text-gray-200 relative">
+            {/* OVERLAY (mobile only) */}
+            {sidebarOpen && (
+                <div
+                    className="fixed inset-0 bg-black/60 z-30 md:hidden"
+                    onClick={() => setSidebarOpen(false)}
+                />
+            )}
+
             {/* SIDEBAR */}
-            <aside className="w-64 border-r border-white/10 p-3">
+            <aside
+                className={`
+                    fixed z-40 inset-y-0 left-0 w-64 bg-black border-r border-white/10 p-3
+                    transform transition-transform duration-200
+                    ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
+                    md:static md:translate-x-0
+                `}
+            >
                 <button
                     onClick={() => createNewSession()}
                     className="w-full flex items-center justify-center gap-2 bg-white text-black py-2 rounded"
@@ -235,7 +224,10 @@ export default function ChatPage() {
                     {chats.map(chat => (
                         <button
                             key={chat.id}
-                            onClick={() => setActiveChatId(chat.id)}
+                            onClick={() => {
+                                setActiveChatId(chat.id);
+                                setSidebarOpen(false); // 🔹 close on mobile
+                            }}
                             className={`w-full text-left px-3 py-2 rounded text-sm ${
                                 activeChatId === chat.id
                                     ? "bg-white/10"
@@ -259,9 +251,17 @@ export default function ChatPage() {
             </aside>
 
             {/* MAIN */}
-            <main className="flex-1 flex flex-col">
-                <header className="h-14 border-b border-white/10 flex items-center px-6">
-                    <span className="text-sm tracking-wide">
+            <main className="flex-1 flex flex-col md:ml-0">
+                <header className="h-14 border-b border-white/10 flex items-center px-4 gap-3">
+                    {/* HAMBURGER (mobile only) */}
+                    <button
+                        className="md:hidden"
+                        onClick={() => setSidebarOpen(true)}
+                    >
+                        <Menu size={20} />
+                    </button>
+
+                    <span className="text-sm tracking-wide truncate">
                         SESSION / {activeChat.title}
                     </span>
                 </header>
