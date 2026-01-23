@@ -44,7 +44,7 @@ export default function ChatPage() {
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
 
-    // 🔹 MOBILE SIDEBAR STATE (NEW)
+    // 🔹 MOBILE SIDEBAR STATE
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
     /* ------------ AUTH CHECK ------------ */
@@ -60,6 +60,18 @@ export default function ChatPage() {
             fetchChats(data.session.user.id);
         };
         init();
+    }, []);
+
+    /* ------------ AUTO CLOSE SIDEBAR ON DESKTOP ------------ */
+
+    useEffect(() => {
+        const handleResize = () => {
+            if (window.innerWidth >= 768) {
+                setSidebarOpen(false);
+            }
+        };
+        window.addEventListener("resize", handleResize);
+        return () => window.removeEventListener("resize", handleResize);
     }, []);
 
     /* ------------ FETCH CHATS ------------ */
@@ -110,7 +122,7 @@ export default function ChatPage() {
         setChats(prev => [data, ...prev]);
         setActiveChatId(data.id);
         setMessages([]);
-        setSidebarOpen(false); // 🔹 close sidebar on mobile
+        setSidebarOpen(false);
     };
 
     /* ---------- FETCH MESSAGES ---------- */
@@ -196,7 +208,7 @@ export default function ChatPage() {
 
     return (
         <div className="flex h-screen bg-black text-gray-200 relative">
-            {/* OVERLAY (mobile only) */}
+            {/* OVERLAY (mobile) */}
             {sidebarOpen && (
                 <div
                     className="fixed inset-0 bg-black/60 z-30 md:hidden"
@@ -207,8 +219,9 @@ export default function ChatPage() {
             {/* SIDEBAR */}
             <aside
                 className={`
-                    fixed z-40 inset-y-0 left-0 w-64 bg-black border-r border-white/10 p-3
+                    fixed inset-y-0 left-0 z-40 w-64 bg-black border-r border-white/10 p-3
                     transform transition-transform duration-200
+                    overflow-y-auto
                     ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
                     md:static md:translate-x-0
                 `}
@@ -226,7 +239,7 @@ export default function ChatPage() {
                             key={chat.id}
                             onClick={() => {
                                 setActiveChatId(chat.id);
-                                setSidebarOpen(false); // 🔹 close on mobile
+                                setSidebarOpen(false);
                             }}
                             className={`w-full text-left px-3 py-2 rounded text-sm ${
                                 activeChatId === chat.id
@@ -240,7 +253,7 @@ export default function ChatPage() {
                     ))}
                 </div>
 
-                <div className="mt-auto pt-4">
+                <div className="mt-6">
                     <button className="flex items-center gap-2 text-sm opacity-70">
                         <Database size={14} /> Knowledge Base
                     </button>
@@ -251,14 +264,14 @@ export default function ChatPage() {
             </aside>
 
             {/* MAIN */}
-            <main className="flex-1 flex flex-col md:ml-0">
+            <main className="flex-1 flex flex-col">
                 <header className="h-14 border-b border-white/10 flex items-center px-4 gap-3">
-                    {/* HAMBURGER (mobile only) */}
+                    {/* TOGGLE BUTTON */}
                     <button
                         className="md:hidden"
-                        onClick={() => setSidebarOpen(true)}
+                        onClick={() => setSidebarOpen(prev => !prev)}
                     >
-                        <Menu size={20} />
+                        {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
                     </button>
 
                     <span className="text-sm tracking-wide truncate">
@@ -270,11 +283,7 @@ export default function ChatPage() {
                     {messages.map(msg => (
                         <div
                             key={msg.id}
-                            className={
-                                msg.role === "user"
-                                    ? "text-right"
-                                    : "text-left"
-                            }
+                            className={msg.role === "user" ? "text-right" : "text-left"}
                         >
                             <div className="inline-block max-w-xl px-4 py-2 rounded bg-white/10">
                                 {msg.content}
