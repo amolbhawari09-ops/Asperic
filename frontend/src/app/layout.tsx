@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 /* ---------------- SEO METADATA ---------------- */
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://asperic.com"), // change later if domain differs
+  metadataBase: new URL("https://asperic.com"),
 
   title: {
     default: "Asperic — Reasoning-First AI",
@@ -52,10 +52,10 @@ export const metadata: Metadata = {
     title: "Asperic — Reasoning-First AI",
     description:
       "A professional-grade AI assistant focused on logic, accuracy, and deterministic reasoning.",
-    url: "https://asperic.ai",
+    url: "https://asperic.com",
     images: [
       {
-        url: "/og.png", // optional, safe if missing
+        url: "/og.png",
         width: 1200,
         height: 630,
         alt: "Asperic AI",
@@ -66,8 +66,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Asperic — Reasoning-First AI",
-    description:
-      "Precision-focused AI built for reasoning, not guessing.",
+    description: "Precision-focused AI built for reasoning, not guessing.",
     images: ["/og.png"],
   },
 
@@ -78,17 +77,21 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         {/* Mobile / Responsive */}
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
 
-        {/* Theme color for mobile browsers */}
+        {/* Mobile browser UI */}
         <meta name="theme-color" content="#000000" />
+        <meta name="color-scheme" content="dark" />
       </head>
 
       <body
