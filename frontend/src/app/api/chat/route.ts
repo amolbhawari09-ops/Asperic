@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs"; // 🔒 REQUIRED for Supabase + fetch stability
+export const runtime = "nodejs"; // required for Supabase + fetch
 export const dynamic = "force-dynamic";
 
 type ChatRequest = {
@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   const requestId = crypto.randomUUID();
 
   try {
-    // --- 0. ENV HARD FAIL (NO SILENT DEATHS)
+    /* ---------------- ENV VALIDATION ---------------- */
     const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -33,8 +33,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- 1. COOKIE + SUPABASE
-    const cookieStore = cookies();
+    /* ---------------- SUPABASE SSR ---------------- */
+    const cookieStore = cookies(); // ✅ NOT async
 
     const supabase = createServerClient(
       SUPABASE_URL,
@@ -44,18 +44,18 @@ export async function POST(req: Request) {
           getAll: () => cookieStore.getAll(),
           setAll: (cookiesToSet) => {
             try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              );
+              cookiesToSet.forEach(({ name, value, options }) => {
+                cookieStore.set(name, value, options);
+              });
             } catch {
-              /* ignored (server component safety) */
+              // safe no-op for server components
             }
           },
         },
       }
     );
 
-    // --- 2. AUTH
+    /* ---------------- AUTH ---------------- */
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -67,7 +67,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- 3. SAFE BODY PARSE
+    /* ---------------- BODY PARSE ---------------- */
     let body: ChatRequest;
     try {
       body = await req.json();
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- 4. CHAT OWNERSHIP (RLS GUARD)
+    /* ---------------- CHAT OWNERSHIP ---------------- */
     const { data: chat, error: chatError } = await supabase
       .from("chats")
       .select("id")
@@ -102,14 +102,14 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- 5. CONTEXT FETCH
+    /* ---------------- CONTEXT ---------------- */
     const { data: messages } = await supabase
       .from("messages")
       .select("role, content")
       .eq("chat_id", chat_id)
       .order("created_at", { ascending: true });
 
-    // --- 6. BACKEND CALL (TIMEOUT SAFE)
+    /* ---------------- BACKEND CALL ---------------- */
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25_000);
 
@@ -144,7 +144,7 @@ export async function POST(req: Request) {
 
     const assistantText = await backendRes.text();
 
-    // --- 7. PERSIST ASSISTANT MESSAGE
+    /* ---------------- SAVE ASSISTANT ---------------- */
     const { error: insertError } = await supabase
       .from("messages")
       .insert({
@@ -162,15 +162,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- 8. SUCCESS
     return NextResponse.json(
       { success: true, requestId },
       { status: 200 }
     );
-
-  } catch (err: any) {
+  } catch (err) {
     console.error("🔥 API ROUTE CRASH", err);
-
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
