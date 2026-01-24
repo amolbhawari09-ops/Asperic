@@ -8,8 +8,8 @@ import {
     MessageSquare,
     Database,
     Settings,
-    Menu,
-    X,
+    Menu, // Added
+    X,    // Added
 } from "lucide-react";
 
 /* ---------------- TYPES ---------------- */
@@ -44,7 +44,7 @@ export default function ChatPage() {
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
 
-    // 🔹 MOBILE SIDEBAR STATE
+    // 🔹 MOBILE SIDEBAR STATE (New)
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
     /* ------------ AUTH CHECK ------------ */
@@ -60,18 +60,6 @@ export default function ChatPage() {
             fetchChats(data.session.user.id);
         };
         init();
-    }, []);
-
-    /* ------------ AUTO CLOSE SIDEBAR ON DESKTOP ------------ */
-
-    useEffect(() => {
-        const handleResize = () => {
-            if (window.innerWidth >= 768) {
-                setSidebarOpen(false);
-            }
-        };
-        window.addEventListener("resize", handleResize);
-        return () => window.removeEventListener("resize", handleResize);
     }, []);
 
     /* ------------ FETCH CHATS ------------ */
@@ -122,7 +110,9 @@ export default function ChatPage() {
         setChats(prev => [data, ...prev]);
         setActiveChatId(data.id);
         setMessages([]);
-        setSidebarOpen(false);
+        
+        // Close sidebar on mobile when creating new chat
+        setSidebarOpen(false); 
     };
 
     /* ---------- FETCH MESSAGES ---------- */
@@ -207,85 +197,109 @@ export default function ChatPage() {
     /* ---------------- UI ---------------- */
 
     return (
-        <div className="flex h-screen bg-black text-gray-200 relative">
-            {/* OVERLAY (mobile) */}
+        <div className="flex h-screen bg-black text-gray-200 relative overflow-hidden">
+            
+            {/* 1. MOBILE OVERLAY (Closes sidebar when clicking outside) */}
             {sidebarOpen && (
-                <div
-                    className="fixed inset-0 bg-black/60 z-30 md:hidden"
+                <div 
+                    className="fixed inset-0 bg-black/60 z-30 md:hidden backdrop-blur-sm"
                     onClick={() => setSidebarOpen(false)}
                 />
             )}
 
-            {/* SIDEBAR */}
+            {/* 2. SIDEBAR (Responsive) */}
             <aside
                 className={`
-                    fixed inset-y-0 left-0 z-40 w-64 bg-black border-r border-white/10 p-3
-                    transform transition-transform duration-200
-                    overflow-y-auto
+                    fixed inset-y-0 left-0 z-40 w-72 bg-black border-r border-white/10 p-4
+                    transform transition-transform duration-300 ease-in-out
                     ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
-                    md:static md:translate-x-0
+                    md:relative md:translate-x-0 md:w-64 md:block
                 `}
             >
+                <div className="flex items-center justify-between mb-4 md:hidden">
+                    <span className="font-bold text-lg">Asperic</span>
+                    <button onClick={() => setSidebarOpen(false)}>
+                        <X size={20} className="text-gray-400" />
+                    </button>
+                </div>
+
                 <button
                     onClick={() => createNewSession()}
-                    className="w-full flex items-center justify-center gap-2 bg-white text-black py-2 rounded"
+                    className="w-full flex items-center justify-center gap-2 bg-white text-black py-2 rounded font-medium hover:bg-gray-200 transition"
                 >
                     <Plus size={16} /> New Task
                 </button>
 
-                <div className="mt-4 space-y-1">
+                <div className="mt-6 space-y-1 overflow-y-auto max-h-[calc(100vh-200px)]">
+                    <div className="text-xs font-mono text-gray-500 mb-2 uppercase tracking-wider">Sessions</div>
                     {chats.map(chat => (
                         <button
                             key={chat.id}
                             onClick={() => {
                                 setActiveChatId(chat.id);
-                                setSidebarOpen(false);
+                                setSidebarOpen(false); // Close sidebar on mobile selection
                             }}
-                            className={`w-full text-left px-3 py-2 rounded text-sm ${
+                            className={`w-full text-left px-3 py-3 rounded text-sm transition-colors flex items-center gap-2 ${
                                 activeChatId === chat.id
-                                    ? "bg-white/10"
-                                    : "hover:bg-white/5"
+                                    ? "bg-white/10 text-white"
+                                    : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
                             }`}
                         >
-                            <MessageSquare size={14} className="inline mr-2" />
-                            {chat.title}
+                            <MessageSquare size={14} />
+                            <span className="truncate">{chat.title || "Untitled Session"}</span>
                         </button>
                     ))}
                 </div>
 
-                <div className="mt-6">
-                    <button className="flex items-center gap-2 text-sm opacity-70">
+                <div className="absolute bottom-4 left-4 right-4">
+                    <button className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition w-full p-2 hover:bg-white/5 rounded">
                         <Database size={14} /> Knowledge Base
                     </button>
-                    <button className="flex items-center gap-2 text-sm opacity-70 mt-2">
+                    <button className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition w-full p-2 hover:bg-white/5 rounded mt-1">
                         <Settings size={14} /> Settings
                     </button>
                 </div>
             </aside>
 
-            {/* MAIN */}
-            <main className="flex-1 flex flex-col">
-                <header className="h-14 border-b border-white/10 flex items-center px-4 gap-3">
-                    {/* TOGGLE BUTTON */}
-                    <button
-                        className="md:hidden"
-                        onClick={() => setSidebarOpen(prev => !prev)}
+            {/* 3. MAIN CONTENT (Full width on mobile) */}
+            <main className="flex-1 flex flex-col h-full w-full relative">
+                
+                {/* HEADER */}
+                <header className="h-14 border-b border-white/10 flex items-center px-4 gap-3 bg-black sticky top-0 z-10">
+                    <button 
+                        className="md:hidden p-2 -ml-2 text-gray-400 hover:text-white"
+                        onClick={() => setSidebarOpen(true)}
                     >
-                        {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+                        <Menu size={24} />
                     </button>
 
-                    <span className="text-sm tracking-wide truncate">
-                        SESSION / {activeChat.title}
+                    <span className="text-sm font-mono tracking-wide text-gray-400 truncate">
+                        SESSION / <span className="text-gray-200">{activeChat.title}</span>
                     </span>
                 </header>
 
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {/* MESSAGES */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                    {messages.length === 0 && (
+                        <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
+                            <p>System Ready.</p>
+                        </div>
+                    )}
+                    
                     {messages.map(msg => (
                         <div
                             key={msg.id}
-                            className={msg.role === "user" ? "text-right" : "text-left"}
+                            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                         >
-                            <div className="inline-block max-w-xl px-4 py-2 rounded bg-white/10">
+                            <div 
+                                className={`
+                                    max-w-[85%] px-4 py-3 rounded-lg text-sm leading-relaxed
+                                    ${msg.role === "user" 
+                                        ? "bg-white text-black" 
+                                        : "bg-white/10 text-gray-200 border border-white/5"
+                                    }
+                                `}
+                            >
                                 {msg.content}
                             </div>
                         </div>
@@ -293,21 +307,24 @@ export default function ChatPage() {
                     <div ref={bottomRef} />
                 </div>
 
-                <footer className="p-4 border-t border-white/10 flex gap-2">
-                    <input
-                        value={input}
-                        onChange={e => setInput(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && sendMessage()}
-                        placeholder="Type your message..."
-                        className="flex-1 bg-white/5 px-4 py-2 rounded outline-none"
-                    />
-                    <button
-                        onClick={sendMessage}
-                        disabled={sending}
-                        className="bg-white text-black px-4 rounded"
-                    >
-                        Send
-                    </button>
+                {/* INPUT */}
+                <footer className="p-4 border-t border-white/10 bg-black">
+                    <div className="flex gap-2 max-w-4xl mx-auto">
+                        <input
+                            value={input}
+                            onChange={e => setInput(e.target.value)}
+                            onKeyDown={e => e.key === "Enter" && sendMessage()}
+                            placeholder="Type your instruction..."
+                            className="flex-1 bg-white/5 border border-white/10 px-4 py-3 rounded-lg outline-none focus:border-white/30 text-sm transition-colors"
+                        />
+                        <button
+                            onClick={sendMessage}
+                            disabled={sending}
+                            className="bg-white/10 hover:bg-white/20 text-white px-4 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                            {sending ? "..." : <Plus className="rotate-90" size={20} />}
+                        </button>
+                    </div>
                 </footer>
             </main>
         </div>
