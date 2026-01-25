@@ -27,9 +27,9 @@ export default async function AppLayout({
     }
 
     return (
-        <div className="min-h-screen flex">
-            {/* Sidebar / Header later */}
-            <main className="flex-1">{children}</main>
+        // FIX: Changed "flex" to "relative" to fix mobile layout
+        <div className="min-h-screen relative">
+            <main className="h-full w-full">{children}</main>
         </div>
     );
 }
