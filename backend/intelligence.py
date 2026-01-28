@@ -47,18 +47,39 @@ class IntelligenceCore:
             print(f"⚠️ Research Link Failure: {e}")
             return "ERROR_DATA_RECON_FAILED"
 
-    def _extract_facts(self, raw_data):
-        """Uses Scout to distill raw HTML/text into clean data points."""
-        # NO instructions about tone or articles. Only the task.
-        completion = self.client.chat.completions.create(
-            model=self.SCOUT,
-            messages=[
-                {"role": "system", "content": "Distill the provided text into a technical list of facts. Remove marketing language."},
-                {"role": "user", "content": raw_data}
-            ],
-            temperature=0.0 # Mathematical consistency
+        def _extract_facts(self, raw_data):
+        """
+        UPGRADE: Uses Scout to strictly distill raw HTML/text into clean data points.
+        This filter blocks ads, navigation menus, and marketing noise.
+        """
+        
+        # 1. The "Data Cleaner" Persona
+        # We explicitly tell the model to ignore garbage and format as a list.
+        system_msg = (
+            "You are a strict Data Cleaner. "
+            "1. Extract ONLY the relevant technical facts, dates, and numbers from the text. "
+            "2. IGNORE navigation menus, ads, 'sign up' buttons, and marketing fluff. "
+            "3. Format the output as a clean, factual summary text. "
+            "4. Do not use conversational filler like 'Here are the facts'."
         )
-        return completion.choices[0].message.content.strip()
+        
+        # 2. Execution
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.SCOUT,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": raw_data}
+                ],
+                temperature=0.0  # Zero temp ensures consistent cleaning
+            )
+            return completion.choices[0].message.content.strip()
+            
+        except Exception as e:
+            print(f"⚠️ Fact Extraction Warning: {e}")
+            # Fallback: Return raw data if the cleaning node fails, 
+            # so the system doesn't crash.
+            return raw_data[:500] 
 
     def _sanitize_context(self, text):
         """
