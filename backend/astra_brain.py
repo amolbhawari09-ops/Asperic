@@ -49,11 +49,29 @@ class AstraBrain:
         simple_triggers = {"hi", "hello", "thanks", "who are you", "hey"}
         return any(word in text.lower() for word in simple_triggers) and len(text.split()) < 5
 
-    def _generate_logic(self, q, context, hist):
-        """Pure reasoning prompt. Forces solution-oriented output internally."""
-        system_msg = "Analyze the provided context and answer with technical precision. Output findings only."
-        user_msg = f"CONTEXT: {context}\nQUESTION: {q}"
+        def _generate_logic(self, q, context, hist):
+        """
+        UPGRADE: Synthesizes data into a fluid, professional response 
+        instead of just dumping raw facts.
+        """
+        # We give the AI a 'Persona' so it knows how to write cleanly.
+        system_msg = (
+            "You are a Senior Technical Consultant. "
+            "Synthesize the provided CONTEXT to answer the QUESTION. "
+            "1. Use clear, fluent professional English. "
+            "2. Do not just list facts; explain what they mean. "
+            "3. If the Context is messy, clean it up and organize it. "
+            "4. Use bullet points only for lists, otherwise use paragraphs."
+        )
+        
+        # We format the input clearly so the model sees the separation
+        user_msg = (
+            f"--- BEGIN CONTEXT ---\n{context}\n--- END CONTEXT ---\n\n"
+            f"USER QUESTION: {q}"
+        )
+        
         return self._run_inference(user_msg, system_msg, self.MAVERICK)
+
 
     def security_scrub(self, text):
         """Deterministic data redaction to prevent accidental PII leakage."""
