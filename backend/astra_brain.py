@@ -49,28 +49,46 @@ class AstraBrain:
         simple_triggers = {"hi", "hello", "thanks", "who are you", "hey"}
         return any(word in text.lower() for word in simple_triggers) and len(text.split()) < 5
 
-        def _generate_logic(self, q, context, hist):
+            def _generate_logic(self, q, context, hist, mode="RESEARCH_MODE"):
         """
-        UPGRADE: Synthesizes data into a fluid, professional response 
-        instead of just dumping raw facts.
+        UPGRADE: Dynamically switches 'Persona' based on the Mode.
+        This ensures code looks like code, and chat looks like chat.
         """
-        # We give the AI a 'Persona' so it knows how to write cleanly.
-        system_msg = (
-            "You are a Senior Technical Consultant. "
-            "Synthesize the provided CONTEXT to answer the QUESTION. "
-            "1. Use clear, fluent professional English. "
-            "2. Do not just list facts; explain what they mean. "
-            "3. If the Context is messy, clean it up and organize it. "
-            "4. Use bullet points only for lists, otherwise use paragraphs."
-        )
         
-        # We format the input clearly so the model sees the separation
+        # 1. Default Persona (The Professional)
+        system_role = (
+            "You are a Senior Technical Consultant. "
+            "Synthesize the context into clear, professional English. "
+            "Focus on accuracy and readability."
+        )
+
+        # 2. Persona Switchboard
+        if mode == "PROJECT_MODE": 
+            # Needs to be a coder, not a consultant
+            system_role = (
+                "You are a Senior Software Architect. "
+                "Analyze the code context. Provide specific, secure, and optimized code solutions. "
+                "Explain your logic briefly, then provide the code block."
+            )
+        
+        elif mode == "FAST_MODE":
+            # Needs to be concise
+            system_role = (
+                "You are a helpful and efficient assistant. "
+                "Answer directly and briefly. Do not use filler words."
+            )
+
+        elif "JSON" in q.upper() or "CODE" in q.upper():
+             # Strict format override
+             system_role += " OUTPUT RESTRICTION: Provide ONLY the requested code/JSON. No conversational filler."
+
+        # 3. The Execution
         user_msg = (
             f"--- BEGIN CONTEXT ---\n{context}\n--- END CONTEXT ---\n\n"
             f"USER QUESTION: {q}"
         )
         
-        return self._run_inference(user_msg, system_msg, self.MAVERICK)
+        return self._run_inference(user_msg, system_role, self.MAVERICK)
 
 
     def security_scrub(self, text):
