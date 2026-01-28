@@ -39,8 +39,9 @@ class AstraBrain:
         
         # 3. THE MAVERICK REASONING LAYER (Logic-Only Generation)
         # We strip personality from the prompt to ensure mathematical precision.
-        raw_body = self._generate_logic(user_question, context_data, history)
-        
+        # It MUST look like this for the "Software Architect" or "Consultant" switch to work:
+raw_body = self._generate_logic(user_question, context_data, history, mode=mode)
+
         # 4. RETURN RAW BODY ONLY (No envelope here - main.py handles structure)
         return self.security_scrub(raw_body)
 
