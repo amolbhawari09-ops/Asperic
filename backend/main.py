@@ -3,32 +3,38 @@ import sys
 import uvicorn
 from dotenv import load_dotenv
 
-# Load environment variables from .env file BEFORE any other imports
+# Load environment variables BEFORE anything else
 load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-# Internal Sovereign Node Imports - AUTHORITY BOUNDARIES
+# === INTERNAL SOVEREIGN IMPORTS ===
 from encoder import AspericEncoder
 from predictor import Predictor
 from astra_brain import AstraBrain
 from memory import SupabaseMemory
-from model_loader import embedding_provider  # SINGLETON for pre-warming
+from output_system import OutputSystem
+from model_loader import embedding_provider  # Singleton pre-warm
 
-# 1. SYSTEM INITIALIZATION & UNICODE FIX
+
+# =========================
+# SYSTEM INIT
+# =========================
 if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding="utf-8")
 
 app = FastAPI(
     title="Asperic Sovereign Intelligence Node",
-    version="1.7.0",  # Version bump for performance fix
+    version="2.0.0",  # Major bump: ADR Output System
     default_response_class=PlainTextResponse
 )
 
-# 2. SECURITY: CORS POLICY (Production-Ready)
-# Reads from environment; defaults to localhost for development
+# =========================
+# SECURITY: CORS
+# =========================
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 app.add_middleware(
@@ -39,72 +45,90 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# =========================
+# REQUEST MODEL
+# =========================
 class QueryRequest(BaseModel):
     user_query: str
     user_id: str = "user_1"
     project_id: str = "general"
     mode: str = "auto"
 
-# 3. COMPONENT BOOTSTRAP (Stateful Singletons with Dependency Injection)
+
+# =========================
+# BOOTSTRAP CORE
+# =========================
 print("🚀 BOOTING ASPERIC SOVEREIGN CORE...")
 
-# Pre-warm the embedding model (singleton) so first request is fast
 _ = embedding_provider.model
-print("✅ EMBEDDING MODEL PRE-WARMED (Singleton)")
+print("✅ EMBEDDING MODEL PRE-WARMED")
 
 encoder = AspericEncoder()
 router = Predictor()
-memory = SupabaseMemory()  # Uses the singleton embedding_provider internally
-brain = AstraBrain(memory_shared=memory)  # DEPENDENCY INJECTION: Shared memory
-print("✅ SYSTEM CORE ONLINE.")
+memory = SupabaseMemory()
+brain = AstraBrain(memory_shared=memory)
+output = OutputSystem()
 
+print("✅ SYSTEM CORE ONLINE")
+
+
+# =========================
+# MAIN ENDPOINT
+# =========================
 @app.post("/ask")
 async def handle_request(request: QueryRequest):
     """
     EXECUTIVE PIPELINE:
-    Orchestrates Security, Intent, Reasoning, and Final Assembly.
+    Security → Intent → Reasoning → ADR Output
     """
     try:
-        # STEP 1: SECURITY GATE (The Encoder)
-        # Returns a structured status; main.py decides the terminal action.
-        security_check = encoder.process_input(request.user_query)
-        if security_check["status"] == "BLOCK":
-            return "🛡️ SECURITY VIOLATION: Input rejected by Sovereign Shield."
-        
-        clean_query = security_check["content"]
+        # --- STEP 1: SECURITY GATE ---
+        security = encoder.process_input(request.user_query)
+        if security["status"] == "BLOCK":
+            refusal = {
+                "status": "REFUSED",
+                "refusal": {
+                    "reason": "Security policy violation detected.",
+                    "needed": ["Rephrase the request safely"],
+                    "why_it_matters": "Unsafe inputs cannot be processed."
+                }
+            }
+            return output.assemble(refusal, request.user_query)
 
-        # STEP 2: SESSION RETRIEVAL
+        clean_query = security["content"]
+
+        # --- STEP 2: SESSION CONTEXT ---
         chat_id = memory.create_or_get_chat(request.user_id, request.project_id)
         history = memory.get_history(chat_id)
 
-        # STEP 3: INTENT ROUTING
-        # Explicit mode request is honored; otherwise, Predictor determines intent.
+        # --- STEP 3: INTENT ROUTING ---
         if request.mode.upper() in ["RESEARCH", "DEEP", "PROJECT"]:
             mode = f"{request.mode.upper()}_MODE"
         else:
-            mode, confidence = router.predict(clean_query)
+            mode, _ = router.predict(clean_query)
 
-        # STEP 4: REASONING EXECUTION (The Brain)
-        # Brain returns only the clean 'body' content.
-        raw_body = brain.chat(clean_query, history=history, mode=mode)
+        # --- STEP 4: BRAIN EXECUTION ---
+        # RETURNS STRUCTURED DICT
+        brain_response = brain.chat(clean_query, history=history, mode=mode)
 
-        # STEP 5: ASYNC DATA PERSISTENCE
+        # --- STEP 5: MEMORY PERSISTENCE (TEXT ONLY) ---
         memory.save_message(chat_id, "user", request.user_query)
-        memory.save_message(chat_id, "assistant", raw_body)
-        memory.ingest_interaction(request.user_id, request.user_query, raw_body)
 
-        # STEP 6: STRUCTURAL ENVELOPE (Final Authority)
-        # LLM never decides structure; it is added deterministically via code.
-        return brain.assemble_output(raw_body, mode)
+        assistant_text = brain_response.get("answer") or str(brain_response)
+        memory.save_message(chat_id, "assistant", assistant_text)
+        memory.ingest_interaction(request.user_id, request.user_query, assistant_text)
+
+        # --- STEP 6: ADR OUTPUT ---
+        return output.assemble(brain_response, request.user_query)
 
     except Exception as e:
         print(f"❌ CRITICAL NODE FAILURE: {str(e)}")
-        # Returns proper HTTP 500 status for professional API consumption.
         raise HTTPException(status_code=500, detail=f"NODE_ERROR: {str(e)}")
 
-if __name__ == "__main__":
-    import os
-    import uvicorn
 
+# =========================
+# ENTRY POINT
+# =========================
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
