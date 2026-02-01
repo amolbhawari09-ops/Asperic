@@ -5,20 +5,19 @@ import datetime
 
 class OutputSystem:
     """
-    Asperic Universal Output System (v2)
-    -----------------------------------
-    • Adapts output to RISK, not question type
+    Asperic Universal Output System (v2.1)
+    -------------------------------------
+    • Risk-based rendering
     • Consumer-first by default
-    • Enterprise metadata is OPTIONAL, not forced
-    • No system internals leaked to normal users
+    • Enterprise metadata is explicit, not accidental
     """
 
     def __init__(self, audience: str = "CONSUMER"):
-        # audience = CONSUMER | ENTERPRISE
         self.audience = audience.upper()
+        self._decision_id = self._generate_decision_id()
 
         self.HIGH_STAKES_TRIGGERS = [
-            "should", "deploy", "production", "invest", "legal",
+            "should", "production", "invest", "legal",
             "tax", "finance", "security", "risk", "decide"
         ]
 
@@ -28,30 +27,33 @@ class OutputSystem:
     def assemble(self, response: dict, user_query: str = "") -> str:
         status = response.get("status", "CONDITIONAL")
 
-        # --- REFUSAL IS FIRST-CLASS ---
         if status == "REFUSED":
             return self._render_refusal(response.get("refusal", {}))
 
-        # --- SIMPLE FACT ANSWER ---
+        # --- LOW RISK: JUST ANSWER ---
         if self._is_low_risk(user_query, response):
             return self._clean(response.get("answer", ""))
 
         blocks = []
 
-        # --- CORE ANSWER ---
+        # --- ANSWER ---
         blocks.append(self._clean(response.get("answer", "")))
 
-        # --- CONDITIONS (only if needed) ---
+        # --- SOFT TRUST SIGNAL (NON-INTRUSIVE) ---
+        if self.audience == "CONSUMER" and response.get("confidence"):
+            blocks.append(f"({response['confidence']} confidence)")
+
+        # --- CONDITIONS ---
         assumptions = response.get("assumptions") or []
         if assumptions:
             blocks.append(self._conditions_block(assumptions))
 
-        # --- LIMITS (high-stakes only) ---
+        # --- LIMITS ---
         limits = response.get("limits") or []
         if limits and self._is_high_stakes(user_query):
             blocks.append(self._limits_block(limits))
 
-        # --- ENTERPRISE METADATA (OPTIONAL) ---
+        # --- ENTERPRISE METADATA ---
         if self.audience == "ENTERPRISE":
             blocks.append(self._enterprise_metadata(response))
 
@@ -61,13 +63,10 @@ class OutputSystem:
     # RENDER BLOCKS
     # =========================
     def _render_refusal(self, refusal: dict) -> str:
-        blocks = []
+        blocks = ["I can’t answer this yet."]
 
-        blocks.append("I can’t answer this yet.")
-
-        reason = refusal.get("reason")
-        if reason:
-            blocks.append(reason)
+        if refusal.get("reason"):
+            blocks.append(refusal["reason"])
 
         needed = refusal.get("needed", [])
         if needed:
@@ -76,9 +75,8 @@ class OutputSystem:
                 "\n".join(f"- {self._clean(n)}" for n in needed)
             )
 
-        why = refusal.get("why_it_matters")
-        if why:
-            blocks.append(why)
+        if refusal.get("why_it_matters"):
+            blocks.append(refusal["why_it_matters"])
 
         if self.audience == "ENTERPRISE":
             blocks.append(self._decision_metadata())
@@ -86,33 +84,31 @@ class OutputSystem:
         return "\n\n".join(blocks)
 
     def _conditions_block(self, assumptions: list) -> str:
-        return (
-            "This holds if:\n" +
-            "\n".join(f"- {self._clean(a)}" for a in assumptions)
+        return "This holds if:\n" + "\n".join(
+            f"- {self._clean(a)}" for a in assumptions
         )
 
     def _limits_block(self, limits: list) -> str:
-        return (
-            "Be aware:\n" +
-            "\n".join(f"- {self._clean(l)}" for l in limits)
+        return "Be aware:\n" + "\n".join(
+            f"- {self._clean(l)}" for l in limits
         )
 
     # =========================
-    # ENTERPRISE ONLY
+    # ENTERPRISE
     # =========================
     def _enterprise_metadata(self, response: dict) -> str:
         return (
             "--\n"
             f"Status: {response.get('status')}\n"
             f"Confidence: {response.get('confidence', 'N/A')}\n"
-            f"Decision ID: {self._generate_decision_id()}\n"
+            f"Decision ID: {self._decision_id}\n"
             f"Time: {self._timestamp()}"
         )
 
     def _decision_metadata(self) -> str:
         return (
             "--\n"
-            f"Decision ID: {self._generate_decision_id()}\n"
+            f"Decision ID: {self._decision_id}\n"
             f"Time: {self._timestamp()}"
         )
 
@@ -128,7 +124,8 @@ class OutputSystem:
 
     def _is_high_stakes(self, query: str) -> bool:
         q = (query or "").lower()
-        return any(k in q for k in self.HIGH_STAKES_TRIGGERS)
+        keyword_hit = any(k in q for k in self.HIGH_STAKES_TRIGGERS)
+        return keyword_hit
 
     # =========================
     # UTILITIES
