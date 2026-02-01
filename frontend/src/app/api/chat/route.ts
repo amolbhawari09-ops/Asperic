@@ -2,13 +2,16 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs"; // required for Supabase + fetch
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/* ---------------- TYPES ---------------- */
 
 type ChatRequest = {
   chat_id: string;
   user_query: string;
-  mode?: string;
+  thinking?: "practical" | "analytical";
+  output?: "simple" | "professional";
 };
 
 export async function POST(req: Request) {
@@ -21,12 +24,7 @@ export async function POST(req: Request) {
     const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
     if (!SUPABASE_URL || !SUPABASE_KEY || !API_URL) {
-      console.error("❌ ENV MISSING", {
-        SUPABASE_URL: !!SUPABASE_URL,
-        SUPABASE_KEY: !!SUPABASE_KEY,
-        API_URL: !!API_URL,
-      });
-
+      console.error("❌ ENV MISSING");
       return NextResponse.json(
         { error: "Server misconfigured" },
         { status: 500 }
@@ -34,7 +32,7 @@ export async function POST(req: Request) {
     }
 
     /* ---------------- SUPABASE SSR ---------------- */
-    const cookieStore = cookies(); // ✅ NOT async
+    const cookieStore = cookies();
 
     const supabase = createServerClient(
       SUPABASE_URL,
@@ -48,7 +46,7 @@ export async function POST(req: Request) {
                 cookieStore.set(name, value, options);
               });
             } catch {
-              // safe no-op for server components
+              // no-op (server components)
             }
           },
         },
@@ -67,7 +65,7 @@ export async function POST(req: Request) {
       );
     }
 
-    /* ---------------- BODY PARSE ---------------- */
+    /* ---------------- BODY ---------------- */
     let body: ChatRequest;
     try {
       body = await req.json();
@@ -78,7 +76,12 @@ export async function POST(req: Request) {
       );
     }
 
-    const { chat_id, user_query, mode } = body;
+    const {
+      chat_id,
+      user_query,
+      thinking = "practical",
+      output = "simple",
+    } = body;
 
     if (!chat_id || !user_query) {
       return NextResponse.json(
@@ -121,7 +124,8 @@ export async function POST(req: Request) {
         user_query,
         user_id: session.user.id,
         project_id: chat_id,
-        mode: mode || "GENERAL",
+        thinking,
+        output,
         history: messages ?? [],
       }),
     });
@@ -166,6 +170,7 @@ export async function POST(req: Request) {
       { success: true, requestId },
       { status: 200 }
     );
+
   } catch (err) {
     console.error("🔥 API ROUTE CRASH", err);
     return NextResponse.json(
