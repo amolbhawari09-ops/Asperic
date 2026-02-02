@@ -6,14 +6,17 @@ from intelligence import IntelligenceCore
 
 class AstraBrain:
     """
-    Asperic Core Reasoning Node
-    ---------------------------
-    Responsible ONLY for reasoning and structured decision output.
-    NEVER formats final user-facing text.
+    Asperic Core Reasoning Node (Upgraded)
+    -------------------------------------
+    Responsibilities:
+    - Professional reasoning ONLY
+    - Obey declared SituationDecision
+    - Produce structured, auditable decisions
+    - NEVER infer context or persona
     """
 
-    def __init__(self, memory_shared=None):
-        # === INFRASTRUCTURE & SECURITY ===
+    def __init__(self, memory_shared=None, intelligence_core=None):
+        # === INFRASTRUCTURE ===
         self.api_key = os.getenv("GROQ_API_KEY")
         if not self.api_key:
             raise EnvironmentError("CRITICAL: GROQ_API_KEY not found.")
@@ -21,9 +24,9 @@ class AstraBrain:
         self.client = Groq(api_key=self.api_key)
 
         self.MAVERICK = "meta-llama/llama-4-maverick-17b-128e-instruct"
-        self.SCOUT = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-        self.intel = IntelligenceCore()
+        # Dependency injection (testable & controllable)
+        self.intel = intelligence_core or IntelligenceCore()
         self.memory = memory_shared
 
     # =========================
@@ -31,76 +34,145 @@ class AstraBrain:
     # =========================
     def chat(
         self,
-        user_question,
-        history=None,
-        mode="RESEARCH_MODE",
-        thinking="practical"
-    ):
+        user_question: str,
+        history: list,
+        situation
+    ) -> dict:
+        """
+        Professional reasoning entrypoint.
+        Situation is DECLARED, not inferred.
+        """
+
         history = history or []
 
-        # ---- SIMPLE QUERY FAST PATH ----
-        if self._is_simple_query(user_question):
-            text = self._run_inference(
-                user_question,
-                "Provide a brief, factual answer. No filler.",
-                self.SCOUT
+        # =========================
+        # 1. Determine reasoning strictness
+        # =========================
+        thinking = (
+            "analytical"
+            if situation.ruleset == "strict"
+            else "practical"
+        )
+
+        # =========================
+        # 2. Context gathering (policy-gated)
+        # =========================
+        context = ""
+
+        if situation.verification_required:
+            context = self.intel.verify_facts(
+                self.intel.live_research(user_question)
             )
-            return self._verified_response(text)
 
-        # ---- CONTEXT GATHERING ----
-        context = self._gather_context(user_question, mode)
+            if not context or "ERROR" in context or "INSUFFICIENT" in context:
+                if situation.refusal_allowed:
+                    return self._refusal_response(
+                        reason="Insufficient verified information to answer safely.",
+                        needed=["Provide missing details", "Clarify constraints"],
+                        why="This situation requires verifiable correctness."
+                    )
+                else:
+                    context = ""  # continue without verified context
 
-        if self._context_insufficient(context):
-            return self._refusal_response(
-                reason="Insufficient verified context to answer safely.",
-                needed=["Clarify scope", "Provide required details"],
-                why="Asperic does not guess when critical data is missing."
-            )
-
-        # ---- REASONING ----
+        # =========================
+        # 3. Core reasoning
+        # =========================
         raw_answer = self._generate_logic(
-            q=user_question,
+            question=user_question,
             context=context,
-            hist=history,
-            mode=mode,
             thinking=thinking
         )
 
         clean_answer = self._security_scrub(raw_answer)
 
-        return self._conditional_response(clean_answer, context, thinking)
+        # =========================
+        # 4. Structured response
+        # =========================
+        return self._build_response(
+            answer=clean_answer,
+            situation=situation,
+            used_verification=bool(context)
+        )
 
     # =========================
-    # RESPONSE BUILDERS
+    # CORE REASONING
     # =========================
-    def _verified_response(self, answer: str) -> dict:
-        return {
-            "answer": answer,
-            "status": "VERIFIED",
-            "confidence": "High",
-            "assumptions": [],
-            "reasons": [],
-            "limits": [],
-            "next_steps": []
-        }
+    def _generate_logic(self, question: str, context: str, thinking: str) -> str:
+        """
+        Pure reasoning engine.
+        No mode logic. No situation inference.
+        """
 
-    def _conditional_response(self, answer: str, context: str, thinking: str) -> dict:
-        assumptions = (
-            self._extract_assumptions(context)
-            if thinking == "analytical"
-            else []
+        if thinking == "analytical":
+            system_role = (
+                "You are a senior professional expert. "
+                "Produce a correct, defensible answer. "
+                "Explicitly state assumptions, constraints, and uncertainties. "
+                "If information is missing, say so clearly. "
+                "Avoid speculation."
+            )
+        else:
+            system_role = (
+                "You are a knowledgeable professional assistant. "
+                "Provide a clear, accurate explanation using safe defaults. "
+                "Do not invent facts or over-speculate."
+            )
+
+        user_msg = (
+            f"--- CONTEXT ---\n{context}\n--- END CONTEXT ---\n\n"
+            f"QUESTION:\n{question}"
+        )
+
+        return self._run_inference(
+            prompt=user_msg,
+            system_msg=system_role
+        )
+
+    # =========================
+    # RESPONSE BUILDING
+    # =========================
+    def _build_response(self, answer: str, situation, used_verification: bool) -> dict:
+        """
+        Policy-aware response constructor.
+        """
+
+        status = (
+            "VERIFIED"
+            if situation.situation in ["LOW_STAKES", "INFORMATIONAL"]
+            else "CONDITIONAL"
+        )
+
+        confidence = (
+            "High"
+            if situation.situation in ["LOW_STAKES", "INFORMATIONAL"]
+            else "Medium"
         )
 
         return {
             "answer": answer,
-            "status": "CONDITIONAL" if assumptions else "VERIFIED",
-            "confidence": "Medium" if assumptions else "High",
-            "assumptions": assumptions,
-            "reasons": self._extract_reasons(context),
-            "limits": self._extract_limits(context),
+            "status": status,
+            "confidence": confidence,
+            "assumptions": (
+                ["External data assumed correct"]
+                if used_verification
+                else []
+            ),
+            "reasons": (
+                ["Based on verified external sources"]
+                if used_verification
+                else []
+            ),
+            "limits": (
+                ["Limited by available verified data"]
+                if situation.verification_required and not used_verification
+                else []
+            ),
             "next_steps": []
         }
 
+    # =========================
+    # REFUSAL
+    # =========================
     def _refusal_response(self, reason, needed, why) -> dict:
         return {
             "status": "REFUSED",
@@ -112,75 +184,11 @@ class AstraBrain:
         }
 
     # =========================
-    # CORE LOGIC
+    # INFRA
     # =========================
-    def _generate_logic(self, q, context, hist, mode, thinking):
-        """
-        thinking:
-          - practical   → fast, default-safe reasoning
-          - analytical  → deep, assumption-aware reasoning
-        """
-
-        if thinking == "analytical":
-            system_role = (
-                "You are a senior technical expert. "
-                "Reason carefully. Explicitly evaluate assumptions, edge cases, "
-                "and tradeoffs. Avoid speculation. If data is missing, say so."
-            )
-        else:
-            system_role = (
-                "You are a senior practitioner. "
-                "Provide a clear, actionable answer using safe defaults. "
-                "Avoid unnecessary theory or exploration."
-            )
-
-        if mode == "PROJECT_MODE":
-            system_role += (
-                " Provide production-grade guidance suitable for real systems."
-            )
-
-        user_msg = (
-            f"--- CONTEXT ---\n{context}\n--- END CONTEXT ---\n\n"
-            f"QUESTION: {q}"
-        )
-
-        return self._run_inference(user_msg, system_role, self.MAVERICK)
-
-    # =========================
-    # UTILITIES
-    # =========================
-    def _is_simple_query(self, text):
-        simple = {"hi", "hello", "thanks", "hey"}
-        return text.lower().strip() in simple
-
-    def _context_insufficient(self, context):
-        if not context:
-            return True
-        if "ERROR" in context or "INSUFFICIENT" in context:
-            return True
-        return False
-
-    def _extract_assumptions(self, context):
-        assumptions = []
-        lc = context.lower()
-        if "jurisdiction" in lc:
-            assumptions.append("Jurisdiction-specific rules assumed")
-        if "time" in lc:
-            assumptions.append("Time-sensitive data assumed current")
-        return assumptions
-
-    def _extract_reasons(self, context):
-        return ["Based on verified external data"] if context else []
-
-    def _extract_limits(self, context):
-        limits = []
-        if "approx" in context.lower():
-            limits.append("Values may be approximate")
-        return limits
-
-    def _run_inference(self, prompt, system_msg, model):
+    def _run_inference(self, prompt: str, system_msg: str) -> str:
         completion = self.client.chat.completions.create(
-            model=model,
+            model=self.MAVERICK,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt}
@@ -189,16 +197,7 @@ class AstraBrain:
         )
         return completion.choices[0].message.content.strip()
 
-    def _gather_context(self, query, mode):
-        if mode == "PROJECT_MODE" and self.memory:
-            return self.memory.search(query)
-        if mode == "RESEARCH_MODE":
-            return self.intel.verify_facts(
-                self.intel.live_research(query)
-            )
-        return ""
-
-    def _security_scrub(self, text):
+    def _security_scrub(self, text: str) -> str:
         text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[SENSITIVE]', text)
         text = re.sub(r'\b[a-fA-F0-9]{32,}\b', '[SENSITIVE]', text)
         return text.replace("**", "").strip()
