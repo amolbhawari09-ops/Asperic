@@ -3,7 +3,6 @@ import sys
 import uvicorn
 from dotenv import load_dotenv
 
-# Load environment variables BEFORE anything else
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException
@@ -11,13 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-# === INTERNAL SOVEREIGN IMPORTS ===
+# === CORE COMPONENTS ===
 from encoder import AspericEncoder
 from predictor import Predictor
+from situation_interpreter import SituationInterpreter
 from astra_brain import AstraBrain
 from memory import SupabaseMemory
 from output_system import OutputSystem
-from model_loader import embedding_provider  # Singleton pre-warm
+from model_loader import embedding_provider
 
 
 # =========================
@@ -28,7 +28,7 @@ if sys.platform == "win32":
 
 app = FastAPI(
     title="Asperic Sovereign Intelligence Node",
-    version="2.1.0",  # Thinking + Output wired
+    version="3.0.0",
     default_response_class=PlainTextResponse
 )
 
@@ -53,13 +53,6 @@ class QueryRequest(BaseModel):
     user_id: str = "user_1"
     project_id: str = "general"
 
-    # NEW (from frontend toggles)
-    thinking: str = "practical"       # practical | analytical
-    output: str = "simple"             # simple | professional
-
-    # Legacy / internal
-    mode: str = "auto"
-
 
 # =========================
 # BOOTSTRAP CORE
@@ -70,7 +63,8 @@ _ = embedding_provider.model
 print("✅ EMBEDDING MODEL PRE-WARMED")
 
 encoder = AspericEncoder()
-router = Predictor()
+predictor = Predictor()
+situation_interpreter = SituationInterpreter()
 memory = SupabaseMemory()
 brain = AstraBrain(memory_shared=memory)
 
@@ -83,53 +77,63 @@ print("✅ SYSTEM CORE ONLINE")
 @app.post("/ask")
 async def handle_request(request: QueryRequest):
     """
-    EXECUTIVE PIPELINE:
-    Security → Intent → Reasoning → Output
+    FINAL ORCHESTRATION PIPELINE:
+    Encoder → Predictor → SituationInterpreter → AstraBrain → OutputSystem
     """
     try:
-        # --- STEP 1: SECURITY GATE ---
+        # =========================
+        # 1. SECURITY GATE
+        # =========================
         security = encoder.process_input(request.user_query)
-        if security["status"] == "BLOCK":
+
+        if security["status"] == "REFUSED":
             output_sys = OutputSystem(audience="CONSUMER")
-            refusal = {
-                "status": "REFUSED",
-                "refusal": {
-                    "reason": "Security policy violation detected.",
-                    "needed": ["Rephrase the request safely"],
-                    "why_it_matters": "Unsafe inputs cannot be processed."
-                }
-            }
-            return output_sys.assemble(refusal, request.user_query)
+            return output_sys.assemble(security, request.user_query)
 
         clean_query = security["content"]
 
-        # --- STEP 2: SESSION CONTEXT ---
-        chat_id = memory.create_or_get_chat(request.user_id, request.project_id)
+        # =========================
+        # 2. MEMORY CONTEXT
+        # =========================
+        chat_id = memory.create_or_get_chat(
+            request.user_id,
+            request.project_id
+        )
         history = memory.get_history(chat_id)
 
-        # --- STEP 3: INTENT ROUTING (LEGACY, STILL VALID) ---
-        if request.mode.upper() in ["RESEARCH", "DEEP", "PROJECT"]:
-            mode = f"{request.mode.upper()}_MODE"
-        else:
-            mode, _ = router.predict(clean_query)
+        # =========================
+        # 3. INTENT CLASSIFICATION
+        # =========================
+        intent_signal = predictor.predict(clean_query)
 
-        # --- STEP 4: THINKING MODE NORMALIZATION ---
-        thinking = request.thinking.lower()
-        if thinking not in ["practical", "analytical"]:
-            thinking = "practical"
-
-        # --- STEP 5: BRAIN EXECUTION ---
-        brain_response = brain.chat(
-            clean_query,
-            history=history,
-            mode=mode,
-            thinking=thinking
+        # =========================
+        # 4. SITUATION INTERPRETATION
+        # =========================
+        situation = situation_interpreter.interpret(
+            intent_signal=intent_signal,
+            user_query=clean_query
         )
 
-        # --- STEP 6: MEMORY PERSISTENCE ---
+        # =========================
+        # 5. PROFESSIONAL REASONING
+        # =========================
+        brain_response = brain.chat(
+            user_question=clean_query,
+            history=history,
+            situation=situation
+        )
+
+        # =========================
+        # 6. MEMORY PERSISTENCE
+        # =========================
         memory.save_message(chat_id, "user", request.user_query)
 
-        assistant_text = brain_response.get("answer") or str(brain_response)
+        assistant_text = (
+            brain_response.get("answer")
+            if isinstance(brain_response, dict)
+            else str(brain_response)
+        )
+
         memory.save_message(chat_id, "assistant", assistant_text)
         memory.ingest_interaction(
             request.user_id,
@@ -137,17 +141,21 @@ async def handle_request(request: QueryRequest):
             assistant_text
         )
 
-        # --- STEP 7: OUTPUT MODE NORMALIZATION ---
+        # =========================
+        # 7. OUTPUT RENDERING
+        # =========================
         audience = (
             "ENTERPRISE"
-            if request.output.lower() == "professional"
+            if situation.ruleset == "strict"
             else "CONSUMER"
         )
 
         output_sys = OutputSystem(audience=audience)
 
-        # --- STEP 8: FINAL OUTPUT ---
-        return output_sys.assemble(brain_response, request.user_query)
+        return output_sys.assemble(
+            brain_response,
+            request.user_query
+        )
 
     except Exception as e:
         print(f"❌ CRITICAL NODE FAILURE: {str(e)}")
