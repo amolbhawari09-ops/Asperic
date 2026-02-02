@@ -6,26 +6,23 @@ from intelligence import IntelligenceCore
 
 class AstraBrain:
     """
-    Asperic Core Reasoning Node (Upgraded)
-    -------------------------------------
+    Asperic Core Reasoning Node (Final)
+    ----------------------------------
     Responsibilities:
     - Professional reasoning ONLY
     - Obey declared SituationDecision
-    - Produce structured, auditable decisions
-    - NEVER infer context or persona
+    - Consume structured verification results
+    - NEVER infer situation, stakes, or persona
     """
 
     def __init__(self, memory_shared=None, intelligence_core=None):
-        # === INFRASTRUCTURE ===
         self.api_key = os.getenv("GROQ_API_KEY")
         if not self.api_key:
             raise EnvironmentError("CRITICAL: GROQ_API_KEY not found.")
 
         self.client = Groq(api_key=self.api_key)
-
         self.MAVERICK = "meta-llama/llama-4-maverick-17b-128e-instruct"
 
-        # Dependency injection (testable & controllable)
         self.intel = intelligence_core or IntelligenceCore()
         self.memory = memory_shared
 
@@ -55,31 +52,38 @@ class AstraBrain:
         )
 
         # =========================
-        # 2. Context gathering (policy-gated)
+        # 2. Verification (policy-gated)
         # =========================
-        context = ""
+        verification = None
+        context_text = ""
 
         if situation.verification_required:
-            context = self.intel.verify_facts(
-                self.intel.live_research(user_question)
-            )
+            verification = self.intel.verify(user_question)
 
-            if not context or "ERROR" in context or "INSUFFICIENT" in context:
+            if verification["status"] == "ERROR":
                 if situation.refusal_allowed:
                     return self._refusal_response(
-                        reason="Insufficient verified information to answer safely.",
-                        needed=["Provide missing details", "Clarify constraints"],
-                        why="This situation requires verifiable correctness."
+                        reason="Verification process failed.",
+                        needed=["Retry later", "Provide alternative sources"],
+                        why="This situation requires verified correctness."
                     )
-                else:
-                    context = ""  # continue without verified context
+
+            if verification["status"] == "INSUFFICIENT":
+                if situation.refusal_allowed:
+                    return self._refusal_response(
+                        reason="Insufficient verified information.",
+                        needed=verification.get("gaps", []),
+                        why="This decision requires verifiable accuracy."
+                    )
+
+            context_text = verification.get("content", "")
 
         # =========================
         # 3. Core reasoning
         # =========================
         raw_answer = self._generate_logic(
             question=user_question,
-            context=context,
+            context=context_text,
             thinking=thinking
         )
 
@@ -91,22 +95,17 @@ class AstraBrain:
         return self._build_response(
             answer=clean_answer,
             situation=situation,
-            used_verification=bool(context)
+            verification=verification
         )
 
     # =========================
     # CORE REASONING
     # =========================
     def _generate_logic(self, question: str, context: str, thinking: str) -> str:
-        """
-        Pure reasoning engine.
-        No mode logic. No situation inference.
-        """
-
         if thinking == "analytical":
             system_role = (
                 "You are a senior professional expert. "
-                "Produce a correct, defensible answer. "
+                "Provide a correct, defensible answer. "
                 "Explicitly state assumptions, constraints, and uncertainties. "
                 "If information is missing, say so clearly. "
                 "Avoid speculation."
@@ -123,48 +122,31 @@ class AstraBrain:
             f"QUESTION:\n{question}"
         )
 
-        return self._run_inference(
-            prompt=user_msg,
-            system_msg=system_role
-        )
+        return self._run_inference(user_msg, system_role)
 
     # =========================
     # RESPONSE BUILDING
     # =========================
-    def _build_response(self, answer: str, situation, used_verification: bool) -> dict:
-        """
-        Policy-aware response constructor.
-        """
-
-        status = (
-            "VERIFIED"
-            if situation.situation in ["LOW_STAKES", "INFORMATIONAL"]
-            else "CONDITIONAL"
-        )
-
-        confidence = (
-            "High"
-            if situation.situation in ["LOW_STAKES", "INFORMATIONAL"]
-            else "Medium"
-        )
+    def _build_response(self, answer: str, situation, verification: dict | None) -> dict:
+        verified = verification and verification.get("status") == "VERIFIED"
 
         return {
             "answer": answer,
-            "status": status,
-            "confidence": confidence,
+            "status": "VERIFIED" if verified else "CONDITIONAL",
+            "confidence": "High" if verified else "Medium",
             "assumptions": (
                 ["External data assumed correct"]
-                if used_verification
+                if verified
                 else []
             ),
             "reasons": (
                 ["Based on verified external sources"]
-                if used_verification
+                if verified
                 else []
             ),
             "limits": (
-                ["Limited by available verified data"]
-                if situation.verification_required and not used_verification
+                verification.get("gaps", [])
+                if verification and verification.get("gaps")
                 else []
             ),
             "next_steps": []
