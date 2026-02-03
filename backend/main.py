@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from encoder import AspericEncoder
 from predictor import Predictor
 from situation_interpreter import SituationInterpreter
+from reasoning_controller import ReasoningController
 from astra_brain import AstraBrain
 from memory import SupabaseMemory
 from output_system import OutputSystem
@@ -28,7 +29,7 @@ if sys.platform == "win32":
 
 app = FastAPI(
     title="Asperic Sovereign Intelligence Node",
-    version="3.0.0",
+    version="3.1.0",
     default_response_class=PlainTextResponse
 )
 
@@ -64,6 +65,7 @@ print("✅ EMBEDDING MODEL PRE-WARMED")
 
 encoder = AspericEncoder()
 predictor = Predictor()
+reasoning_controller = ReasoningController()  # 🧠 NEW
 situation_interpreter = SituationInterpreter()
 memory = SupabaseMemory()
 brain = AstraBrain(memory_shared=memory)
@@ -78,7 +80,9 @@ print("✅ SYSTEM CORE ONLINE")
 async def handle_request(request: QueryRequest):
     """
     FINAL ORCHESTRATION PIPELINE:
-    Encoder → Predictor → SituationInterpreter → AstraBrain → OutputSystem
+    Encoder → Predictor → SituationInterpreter
+           → ReasoningController
+           → AstraBrain → OutputSystem
     """
     try:
         # =========================
@@ -86,7 +90,7 @@ async def handle_request(request: QueryRequest):
         # =========================
         security = encoder.process_input(request.user_query)
 
-        if security["status"] == "REFUSED":
+        if security["status"] == "BLOCK":
             output_sys = OutputSystem(audience="CONSUMER")
             return output_sys.assemble(security, request.user_query)
 
@@ -102,29 +106,34 @@ async def handle_request(request: QueryRequest):
         history = memory.get_history(chat_id)
 
         # =========================
-        # 3. INTENT CLASSIFICATION
+        # 3. CONSEQUENCE / RISK CLASSIFICATION
         # =========================
         intent_signal = predictor.predict(clean_query)
 
         # =========================
-        # 4. SITUATION INTERPRETATION
+        # 4. POLICY SITUATION INTERPRETATION
         # =========================
         situation = situation_interpreter.interpret(
-            intent_signal=intent_signal,
-            user_query=clean_query
+            predictor_output=intent_signal
         )
 
         # =========================
-        # 5. PROFESSIONAL REASONING
+        # 5. COGNITIVE DEPTH DECISION (NEW)
+        # =========================
+        reasoning_decision = reasoning_controller.decide(clean_query)
+
+        # =========================
+        # 6. PROFESSIONAL REASONING
         # =========================
         brain_response = brain.chat(
             user_question=clean_query,
             history=history,
-            situation=situation
+            situation=situation,
+            reasoning_decision=reasoning_decision   # 🧠 NEW INPUT
         )
 
         # =========================
-        # 6. MEMORY PERSISTENCE
+        # 7. MEMORY PERSISTENCE
         # =========================
         memory.save_message(chat_id, "user", request.user_query)
 
@@ -142,7 +151,7 @@ async def handle_request(request: QueryRequest):
         )
 
         # =========================
-        # 7. OUTPUT RENDERING
+        # 8. OUTPUT RENDERING
         # =========================
         audience = (
             "ENTERPRISE"
