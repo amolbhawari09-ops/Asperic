@@ -6,13 +6,11 @@ from intelligence import IntelligenceCore
 
 class AstraBrain:
     """
-    Asperic Core Reasoning Node (Upgraded)
-    -------------------------------------
-    Responsibilities:
-    - Execute reasoning based on declared cognitive depth
-    - Obey SituationDecision (policy, risk)
-    - Consume verification results (as input, not guesswork)
-    - NEVER infer stakes, persona, or depth
+    Asperic Core Reasoning Node (Professional-Grade)
+    ------------------------------------------------
+    - Executes reasoning by declared cognitive depth
+    - Multi-pass reasoning ONLY for RIGOROUS depth
+    - No inference of stakes, persona, or depth
     """
 
     def __init__(self, memory_shared=None, intelligence_core=None):
@@ -36,15 +34,6 @@ class AstraBrain:
         situation,
         reasoning_decision
     ) -> dict:
-        """
-        Professional reasoning entrypoint.
-
-        Inputs are DECLARED:
-        - situation (policy / risk)
-        - reasoning_decision (cognitive depth)
-
-        AstraBrain does NOT infer anything.
-        """
 
         history = history or []
 
@@ -74,13 +63,19 @@ class AstraBrain:
             context_text = verification.get("content", "")
 
         # =========================
-        # 2. Execute reasoning by DEPTH
+        # 2. Execute reasoning
         # =========================
-        raw_answer = self._execute_reasoning(
-            question=user_question,
-            context=context_text,
-            depth=reasoning_decision.depth
-        )
+        if reasoning_decision.depth == "RIGOROUS":
+            raw_answer = self._rigorous_multi_pass(
+                question=user_question,
+                context=context_text
+            )
+        else:
+            raw_answer = self._single_pass(
+                question=user_question,
+                context=context_text,
+                depth=reasoning_decision.depth
+            )
 
         clean_answer = self._security_scrub(raw_answer)
 
@@ -95,48 +90,17 @@ class AstraBrain:
         )
 
     # =========================
-    # REASONING EXECUTION
+    # SINGLE PASS (NON-RIGOROUS)
     # =========================
-    def _execute_reasoning(self, question: str, context: str, depth: str) -> str:
-        """
-        Executes reasoning strictly according to cognitive depth.
-        """
-
+    def _single_pass(self, question: str, context: str, depth: str) -> str:
         if depth == "NONE":
-            system_role = (
-                "Provide a direct, concise factual answer. "
-                "No explanation unless strictly necessary."
-            )
-
+            system_role = "Provide a direct, concise factual answer."
         elif depth == "LIGHT":
+            system_role = "Provide a short, clear explanation."
+        else:  # STRUCTURED
             system_role = (
-                "Provide a short, clear explanation. "
-                "Avoid deep analysis or assumptions."
-            )
-
-        elif depth == "STRUCTURED":
-            system_role = (
-                "Solve the problem step by step. "
+                "Solve step by step. "
                 "Explain reasoning clearly and sequentially."
-            )
-
-        elif depth == "RIGOROUS":
-            system_role = (
-                "You are a senior professional expert.\n"
-                "Follow this strict reasoning process:\n"
-                "1. Define the problem precisely\n"
-                "2. State assumptions explicitly\n"
-                "3. Identify constraints and risks\n"
-                "4. Reason step by step\n"
-                "5. Reach a defensible conclusion\n"
-                "6. State limits and uncertainty\n"
-                "Avoid speculation. No skipped steps."
-            )
-
-        else:
-            # Fail-safe
-            system_role = (
-                "Provide a clear and accurate answer."
             )
 
         user_msg = (
@@ -145,6 +109,58 @@ class AstraBrain:
         )
 
         return self._run_inference(user_msg, system_role)
+
+    # =========================
+    # MULTI-PASS RIGOROUS MODE
+    # =========================
+    def _rigorous_multi_pass(self, question: str, context: str) -> str:
+        # -------- PASS 1: ANALYSIS --------
+        analysis_prompt = (
+            "You are performing internal professional analysis.\n"
+            "Do NOT write a final answer.\n"
+            "Break the problem down, list assumptions, constraints, risks.\n"
+            "Be precise and critical.\n\n"
+            f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
+        )
+
+        analysis = self._run_inference(
+            analysis_prompt,
+            system_msg="You are a senior analyst."
+        )
+
+        # -------- PASS 2: CRITIC --------
+        critique_prompt = (
+            "You are a critical reviewer.\n"
+            "Review the following analysis.\n"
+            "Identify logical gaps, missing assumptions, risks, or weak reasoning.\n"
+            "Suggest corrections.\n\n"
+            f"ANALYSIS:\n{analysis}"
+        )
+
+        critique = self._run_inference(
+            critique_prompt,
+            system_msg="You are a strict professional reviewer."
+        )
+
+        # -------- PASS 3: SYNTHESIS --------
+        synthesis_prompt = (
+            "You are a senior professional.\n"
+            "Using the analysis and critique below, produce a final answer.\n"
+            "The answer must be:\n"
+            "- Clear\n"
+            "- Defensible\n"
+            "- Professionally worded\n"
+            "- Free of internal analysis\n"
+            "- Explicit about limits and uncertainty\n\n"
+            f"ANALYSIS:\n{analysis}\n\n"
+            f"CRITIQUE:\n{critique}\n\n"
+            f"QUESTION:\n{question}"
+        )
+
+        return self._run_inference(
+            synthesis_prompt,
+            system_msg="You are a senior professional expert."
+        )
 
     # =========================
     # RESPONSE BUILDING
@@ -163,11 +179,6 @@ class AstraBrain:
             "status": "VERIFIED" if verified else "CONDITIONAL",
             "confidence": "High" if verified else "Medium",
             "reasoning_depth": reasoning_decision.depth,
-            "assumptions": (
-                ["External data assumed correct"]
-                if verified
-                else []
-            ),
             "limits": (
                 verification.get("gaps", [])
                 if verification and verification.get("gaps")
