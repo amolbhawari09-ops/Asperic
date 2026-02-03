@@ -1,0 +1,169 @@
+import re
+from groq import Groq
+import os
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ReasoningDecision:
+    """
+    Immutable reasoning depth decision.
+    """
+    depth: str                 # NONE | LIGHT | STRUCTURED | RIGOROUS
+    confidence: float          # 0.0 – 1.0
+    signals: list[str]
+    controller_version: str
+
+
+class ReasoningController:
+    """
+    Asperic Reasoning Depth Controller
+    ----------------------------------
+    Purpose:
+    - Decide HOW MUCH thinking is required
+    - Independent of safety, policy, and verification
+    - No answering, no tone, no refusal
+
+    This is the missing cognitive layer.
+    """
+
+    VERSION = "v1.0-cognitive-depth"
+
+    DEPTHS = {
+        "NONE",
+        "LIGHT",
+        "STRUCTURED",
+        "RIGOROUS"
+    }
+
+    def __init__(self):
+        self.api_key = os.getenv("GROQ_API_KEY")
+        if not self.api_key:
+            raise EnvironmentError("CRITICAL: GROQ_API_KEY missing.")
+
+        self.client = Groq(api_key=self.api_key)
+        self.SCOUT = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+        # Deterministic linguistic cues (cheap + fast)
+        self.RIGOROUS_TRIGGERS = [
+            "should i", "decide", "architecture", "design",
+            "strategy", "risk", "production", "deploy",
+            "legal", "tax", "finance", "investment",
+            "medical", "diagnosis"
+        ]
+
+        self.STRUCTURED_TRIGGERS = [
+            "how do i", "steps", "process", "compare",
+            "difference", "explain", "analyze"
+        ]
+
+    # =========================
+    # PUBLIC ENTRY
+    # =========================
+    def decide(self, query: str) -> ReasoningDecision:
+        """
+        Decide cognitive reasoning depth required.
+        """
+
+        signals = []
+
+        # ---------- PHASE 1: FAST HEURISTICS ----------
+        lowered = query.lower()
+
+        if self._is_trivial(query):
+            return self._decision(
+                depth="NONE",
+                confidence=0.9,
+                signals=["trivial_query"]
+            )
+
+        if any(t in lowered for t in self.RIGOROUS_TRIGGERS):
+            signals.append("high_stakes_language")
+
+        if any(t in lowered for t in self.STRUCTURED_TRIGGERS):
+            signals.append("procedural_language")
+
+        # ---------- PHASE 2: LLM COGNITIVE ASSESSMENT ----------
+        llm_result = self._llm_assess_depth(query)
+
+        depth = llm_result.get("depth", "LIGHT")
+        confidence = llm_result.get("confidence", 0.5)
+        llm_signals = llm_result.get("signals", [])
+
+        signals.extend(llm_signals)
+
+        # ---------- PHASE 3: HARD OVERRIDES ----------
+        if "high_stakes_language" in signals:
+            depth = "RIGOROUS"
+
+        if depth not in self.DEPTHS:
+            depth = "LIGHT"
+
+        return self._decision(
+            depth=depth,
+            confidence=round(confidence, 2),
+            signals=list(set(signals))
+        )
+
+    # =========================
+    # INTERNAL HELPERS
+    # =========================
+    def _is_trivial(self, query: str) -> bool:
+        """
+        Detect very simple factual questions.
+        """
+        short = len(query.split()) <= 5
+        simple_pattern = bool(
+            re.match(r"^(what is|define|meaning of)\b", query.lower())
+        )
+        return short and simple_pattern
+
+    def _llm_assess_depth(self, query: str) -> dict:
+        """
+        LLM classifies reasoning depth needed.
+        """
+
+        system_msg = (
+            "You are a cognitive complexity classifier.\n"
+            "Decide how much reasoning is REQUIRED to answer the query correctly.\n\n"
+            "Return ONLY JSON:\n"
+            "{\n"
+            "  \"depth\": \"NONE\" | \"LIGHT\" | \"STRUCTURED\" | \"RIGOROUS\",\n"
+            "  \"confidence\": float (0.0 - 1.0),\n"
+            "  \"signals\": [\"decision\", \"analysis\", \"risk\", \"multi_step\"]\n"
+            "}\n\n"
+            "Definitions:\n"
+            "- NONE: Direct factual answer\n"
+            "- LIGHT: Short explanation\n"
+            "- STRUCTURED: Step-by-step reasoning\n"
+            "- RIGOROUS: Professional-grade reasoning with assumptions and constraints\n"
+        )
+
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.SCOUT,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"}
+            )
+
+            return eval(completion.choices[0].message.content)
+
+        except Exception as e:
+            print(f"⚠️ ReasoningController LLM failure: {e}")
+            return {
+                "depth": "LIGHT",
+                "confidence": 0.4,
+                "signals": ["llm_uncertain"]
+            }
+
+    def _decision(self, depth: str, confidence: float, signals: list) -> ReasoningDecision:
+        return ReasoningDecision(
+            depth=depth,
+            confidence=confidence,
+            signals=signals,
+            controller_version=self.VERSION
+        )
