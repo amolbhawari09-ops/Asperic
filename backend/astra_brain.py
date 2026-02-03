@@ -6,13 +6,13 @@ from intelligence import IntelligenceCore
 
 class AstraBrain:
     """
-    Asperic Core Reasoning Node (Final)
-    ----------------------------------
+    Asperic Core Reasoning Node (Upgraded)
+    -------------------------------------
     Responsibilities:
-    - Professional reasoning ONLY
-    - Obey declared SituationDecision
-    - Consume structured verification results
-    - NEVER infer situation, stakes, or persona
+    - Execute reasoning based on declared cognitive depth
+    - Obey SituationDecision (policy, risk)
+    - Consume verification results (as input, not guesswork)
+    - NEVER infer stakes, persona, or depth
     """
 
     def __init__(self, memory_shared=None, intelligence_core=None):
@@ -33,26 +33,23 @@ class AstraBrain:
         self,
         user_question: str,
         history: list,
-        situation
+        situation,
+        reasoning_decision
     ) -> dict:
         """
         Professional reasoning entrypoint.
-        Situation is DECLARED, not inferred.
+
+        Inputs are DECLARED:
+        - situation (policy / risk)
+        - reasoning_decision (cognitive depth)
+
+        AstraBrain does NOT infer anything.
         """
 
         history = history or []
 
         # =========================
-        # 1. Determine reasoning strictness
-        # =========================
-        thinking = (
-            "analytical"
-            if situation.ruleset == "strict"
-            else "practical"
-        )
-
-        # =========================
-        # 2. Verification (policy-gated)
+        # 1. Verification (policy-gated)
         # =========================
         verification = None
         context_text = ""
@@ -60,61 +57,86 @@ class AstraBrain:
         if situation.verification_required:
             verification = self.intel.verify(user_question)
 
-            if verification["status"] == "ERROR":
-                if situation.refusal_allowed:
-                    return self._refusal_response(
-                        reason="Verification process failed.",
-                        needed=["Retry later", "Provide alternative sources"],
-                        why="This situation requires verified correctness."
-                    )
+            if verification["status"] == "ERROR" and situation.refusal_allowed:
+                return self._refusal_response(
+                    reason="Verification process failed.",
+                    needed=["Retry later", "Provide alternative sources"],
+                    why="This situation requires verified correctness."
+                )
 
-            if verification["status"] == "INSUFFICIENT":
-                if situation.refusal_allowed:
-                    return self._refusal_response(
-                        reason="Insufficient verified information.",
-                        needed=verification.get("gaps", []),
-                        why="This decision requires verifiable accuracy."
-                    )
+            if verification["status"] == "INSUFFICIENT" and situation.refusal_allowed:
+                return self._refusal_response(
+                    reason="Insufficient verified information.",
+                    needed=verification.get("gaps", []),
+                    why="This decision requires verifiable accuracy."
+                )
 
             context_text = verification.get("content", "")
 
         # =========================
-        # 3. Core reasoning
+        # 2. Execute reasoning by DEPTH
         # =========================
-        raw_answer = self._generate_logic(
+        raw_answer = self._execute_reasoning(
             question=user_question,
             context=context_text,
-            thinking=thinking
+            depth=reasoning_decision.depth
         )
 
         clean_answer = self._security_scrub(raw_answer)
 
         # =========================
-        # 4. Structured response
+        # 3. Structured response
         # =========================
         return self._build_response(
             answer=clean_answer,
             situation=situation,
-            verification=verification
+            verification=verification,
+            reasoning_decision=reasoning_decision
         )
 
     # =========================
-    # CORE REASONING
+    # REASONING EXECUTION
     # =========================
-    def _generate_logic(self, question: str, context: str, thinking: str) -> str:
-        if thinking == "analytical":
+    def _execute_reasoning(self, question: str, context: str, depth: str) -> str:
+        """
+        Executes reasoning strictly according to cognitive depth.
+        """
+
+        if depth == "NONE":
             system_role = (
-                "You are a senior professional expert. "
-                "Provide a correct, defensible answer. "
-                "Explicitly state assumptions, constraints, and uncertainties. "
-                "If information is missing, say so clearly. "
-                "Avoid speculation."
+                "Provide a direct, concise factual answer. "
+                "No explanation unless strictly necessary."
             )
-        else:
+
+        elif depth == "LIGHT":
             system_role = (
-                "You are a knowledgeable professional assistant. "
-                "Provide a clear, accurate explanation using safe defaults. "
-                "Do not invent facts or over-speculate."
+                "Provide a short, clear explanation. "
+                "Avoid deep analysis or assumptions."
+            )
+
+        elif depth == "STRUCTURED":
+            system_role = (
+                "Solve the problem step by step. "
+                "Explain reasoning clearly and sequentially."
+            )
+
+        elif depth == "RIGOROUS":
+            system_role = (
+                "You are a senior professional expert.\n"
+                "Follow this strict reasoning process:\n"
+                "1. Define the problem precisely\n"
+                "2. State assumptions explicitly\n"
+                "3. Identify constraints and risks\n"
+                "4. Reason step by step\n"
+                "5. Reach a defensible conclusion\n"
+                "6. State limits and uncertainty\n"
+                "Avoid speculation. No skipped steps."
+            )
+
+        else:
+            # Fail-safe
+            system_role = (
+                "Provide a clear and accurate answer."
             )
 
         user_msg = (
@@ -127,20 +149,22 @@ class AstraBrain:
     # =========================
     # RESPONSE BUILDING
     # =========================
-    def _build_response(self, answer: str, situation, verification: dict | None) -> dict:
+    def _build_response(
+        self,
+        answer: str,
+        situation,
+        verification: dict | None,
+        reasoning_decision
+    ) -> dict:
         verified = verification and verification.get("status") == "VERIFIED"
 
         return {
             "answer": answer,
             "status": "VERIFIED" if verified else "CONDITIONAL",
             "confidence": "High" if verified else "Medium",
+            "reasoning_depth": reasoning_decision.depth,
             "assumptions": (
                 ["External data assumed correct"]
-                if verified
-                else []
-            ),
-            "reasons": (
-                ["Based on verified external sources"]
                 if verified
                 else []
             ),
