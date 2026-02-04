@@ -7,7 +7,7 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 # === CORE COMPONENTS ===
@@ -30,7 +30,7 @@ if sys.platform == "win32":
 app = FastAPI(
     title="Asperic Sovereign Intelligence Node",
     version="3.1.0",
-    default_response_class=PlainTextResponse
+    default_response_class=JSONResponse   # ✅ IMPORTANT FIX
 )
 
 # =========================
@@ -65,7 +65,7 @@ print("✅ EMBEDDING MODEL PRE-WARMED")
 
 encoder = AspericEncoder()
 predictor = Predictor()
-reasoning_controller = ReasoningController()  # 🧠 NEW
+reasoning_controller = ReasoningController()
 situation_interpreter = SituationInterpreter()
 memory = SupabaseMemory()
 brain = AstraBrain(memory_shared=memory)
@@ -81,8 +81,7 @@ async def handle_request(request: QueryRequest):
     """
     FINAL ORCHESTRATION PIPELINE:
     Encoder → Predictor → SituationInterpreter
-           → ReasoningController
-           → AstraBrain → OutputSystem
+           → ReasoningController → AstraBrain → OutputSystem
     """
     try:
         # =========================
@@ -118,7 +117,7 @@ async def handle_request(request: QueryRequest):
         )
 
         # =========================
-        # 5. COGNITIVE DEPTH DECISION (NEW)
+        # 5. COGNITIVE DEPTH DECISION
         # =========================
         reasoning_decision = reasoning_controller.decide(clean_query)
 
@@ -129,7 +128,7 @@ async def handle_request(request: QueryRequest):
             user_question=clean_query,
             history=history,
             situation=situation,
-            reasoning_decision=reasoning_decision   # 🧠 NEW INPUT
+            reasoning_decision=reasoning_decision
         )
 
         # =========================
