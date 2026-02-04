@@ -1,20 +1,19 @@
 import os
 import re
-import time
 from groq import Groq
 from intelligence import IntelligenceCore
 
 
 class AstraBrain:
     """
-    Asperic Core Reasoning Node (Production-Safe)
-    --------------------------------------------
-    - Multi-pass reasoning ONLY for RIGOROUS
-    - Automatic fallback on timeout or failure
-    - GUARANTEED response (no frontend failure)
+    Asperic Core Reasoning Node (Upgraded)
+    -------------------------------------
+    Responsibilities:
+    - Execute reasoning based on declared cognitive depth
+    - Obey SituationDecision (policy, risk)
+    - Consume verification results (as input, not guesswork)
+    - NEVER infer stakes, persona, or depth
     """
-
-    MAX_RIGOROUS_TIME = 8.0  # seconds (safe for Vercel/mobile)
 
     def __init__(self, memory_shared=None, intelligence_core=None):
         self.api_key = os.getenv("GROQ_API_KEY")
@@ -30,12 +29,27 @@ class AstraBrain:
     # =========================
     # PUBLIC ENTRY
     # =========================
-    def chat(self, user_question, history, situation, reasoning_decision) -> dict:
+    def chat(
+        self,
+        user_question: str,
+        history: list,
+        situation,
+        reasoning_decision
+    ) -> dict:
+        """
+        Professional reasoning entrypoint.
+
+        Inputs are DECLARED:
+        - situation (policy / risk)
+        - reasoning_decision (cognitive depth)
+
+        AstraBrain does NOT infer anything.
+        """
+
         history = history or []
-        start_time = time.time()
 
         # =========================
-        # 1. Verification
+        # 1. Verification (policy-gated)
         # =========================
         verification = None
         context_text = ""
@@ -43,7 +57,14 @@ class AstraBrain:
         if situation.verification_required:
             verification = self.intel.verify(user_question)
 
-            if verification["status"] in {"ERROR", "INSUFFICIENT"} and situation.refusal_allowed:
+            if verification["status"] == "ERROR" and situation.refusal_allowed:
+                return self._refusal_response(
+                    reason="Verification process failed.",
+                    needed=["Retry later", "Provide alternative sources"],
+                    why="This situation requires verified correctness."
+                )
+
+            if verification["status"] == "INSUFFICIENT" and situation.refusal_allowed:
                 return self._refusal_response(
                     reason="Insufficient verified information.",
                     needed=verification.get("gaps", []),
@@ -53,105 +74,125 @@ class AstraBrain:
             context_text = verification.get("content", "")
 
         # =========================
-        # 2. Reasoning Execution
+        # 2. Execute reasoning by DEPTH
         # =========================
-        try:
-            if reasoning_decision.depth == "RIGOROUS":
-                raw_answer = self._rigorous_safe(
-                    user_question,
-                    context_text,
-                    start_time
-                )
-            else:
-                raw_answer = self._single_pass(
-                    user_question,
-                    context_text,
-                    reasoning_decision.depth
-                )
-
-        except Exception as e:
-            # ABSOLUTE FAILSAFE
-            raw_answer = (
-                "I encountered a processing issue while reasoning deeply. "
-                "Here is a safe, direct answer instead:\n\n"
-                + self._single_pass(user_question, context_text, "LIGHT")
-            )
+        raw_answer = self._execute_reasoning(
+            question=user_question,
+            context=context_text,
+            depth=reasoning_decision.depth
+        )
 
         clean_answer = self._security_scrub(raw_answer)
 
         # =========================
-        # 3. Structured Response
+        # 3. Structured response
         # =========================
+        return self._build_response(
+            answer=clean_answer,
+            situation=situation,
+            verification=verification,
+            reasoning_decision=reasoning_decision
+        )
+
+    # =========================
+    # REASONING EXECUTION
+    # =========================
+    def _execute_reasoning(self, question: str, context: str, depth: str) -> str:
+        """
+        Executes reasoning strictly according to cognitive depth.
+        """
+
+        if depth == "NONE":
+            system_role = (
+                "Provide a direct, concise factual answer. "
+                "No explanation unless strictly necessary."
+            )
+
+        elif depth == "LIGHT":
+            system_role = (
+                "Provide a short, clear explanation. "
+                "Avoid deep analysis or assumptions."
+            )
+
+        elif depth == "STRUCTURED":
+            system_role = (
+                "Solve the problem step by step. "
+                "Explain reasoning clearly and sequentially."
+            )
+
+        elif depth == "RIGOROUS":
+            system_role = (
+                "You are a senior professional expert.\n"
+                "Follow this strict reasoning process:\n"
+                "1. Define the problem precisely\n"
+                "2. State assumptions explicitly\n"
+                "3. Identify constraints and risks\n"
+                "4. Reason step by step\n"
+                "5. Reach a defensible conclusion\n"
+                "6. State limits and uncertainty\n"
+                "Avoid speculation. No skipped steps."
+            )
+
+        else:
+            # Fail-safe
+            system_role = (
+                "Provide a clear and accurate answer."
+            )
+
+        user_msg = (
+            f"--- CONTEXT ---\n{context}\n--- END CONTEXT ---\n\n"
+            f"QUESTION:\n{question}"
+        )
+
+        return self._run_inference(user_msg, system_role)
+
+    # =========================
+    # RESPONSE BUILDING
+    # =========================
+    def _build_response(
+        self,
+        answer: str,
+        situation,
+        verification: dict | None,
+        reasoning_decision
+    ) -> dict:
+        verified = verification and verification.get("status") == "VERIFIED"
+
         return {
-            "answer": clean_answer,
-            "status": "VERIFIED" if verification and verification.get("status") == "VERIFIED" else "CONDITIONAL",
-            "confidence": "High" if verification else "Medium",
+            "answer": answer,
+            "status": "VERIFIED" if verified else "CONDITIONAL",
+            "confidence": "High" if verified else "Medium",
             "reasoning_depth": reasoning_decision.depth,
-            "limits": verification.get("gaps", []) if verification else [],
+            "assumptions": (
+                ["External data assumed correct"]
+                if verified
+                else []
+            ),
+            "limits": (
+                verification.get("gaps", [])
+                if verification and verification.get("gaps")
+                else []
+            ),
             "next_steps": []
         }
 
     # =========================
-    # SINGLE PASS
+    # REFUSAL
     # =========================
-    def _single_pass(self, question, context, depth) -> str:
-        if depth == "NONE":
-            system_role = "Provide a direct, concise factual answer."
-        elif depth == "LIGHT":
-            system_role = "Provide a short, clear explanation."
-        else:
-            system_role = "Solve step by step. Explain reasoning clearly."
-
-        prompt = f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
-        return self._run(prompt, system_role)
-
-    # =========================
-    # SAFE MULTI-PASS RIGOROUS
-    # =========================
-    def _rigorous_safe(self, question, context, start_time) -> str:
-        def timed():
-            return time.time() - start_time > self.MAX_RIGOROUS_TIME
-
-        # PASS 1 — ANALYSIS
-        analysis = self._run(
-            f"Analyze deeply. List assumptions, risks.\n\n{question}",
-            "You are a senior analyst."
-        )
-
-        if timed():
-            return self._single_pass(question, context, "STRUCTURED")
-
-        # PASS 2 — CRITIC
-        critique = self._run(
-            f"Critique this analysis and find gaps:\n\n{analysis}",
-            "You are a strict reviewer."
-        )
-
-        if timed():
-            return self._single_pass(question, context, "STRUCTURED")
-
-        # PASS 3 — SYNTHESIS
-        return self._run(
-            f"""
-Use the analysis and critique below to give a final professional answer.
-Be clear, cautious, and explicit about limits.
-
-ANALYSIS:
-{analysis}
-
-CRITIQUE:
-{critique}
-
-QUESTION:
-{question}
-""",
-            "You are a senior professional expert."
-        )
+    def _refusal_response(self, reason, needed, why) -> dict:
+        return {
+            "status": "REFUSED",
+            "refusal": {
+                "reason": reason,
+                "needed": needed,
+                "why_it_matters": why
+            }
+        }
 
     # =========================
     # INFRA
     # =========================
-    def _run(self, prompt, system_msg) -> str:
+    def _run_inference(self, prompt: str, system_msg: str) -> str:
         completion = self.client.chat.completions.create(
             model=self.MAVERICK,
             messages=[
@@ -166,13 +207,3 @@ QUESTION:
         text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[SENSITIVE]', text)
         text = re.sub(r'\b[a-fA-F0-9]{32,}\b', '[SENSITIVE]', text)
         return text.replace("**", "").strip()
-
-    def _refusal_response(self, reason, needed, why):
-        return {
-            "status": "REFUSED",
-            "refusal": {
-                "reason": reason,
-                "needed": needed,
-                "why_it_matters": why
-            }
-        }
