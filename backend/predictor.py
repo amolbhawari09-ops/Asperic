@@ -1,22 +1,29 @@
 import json
-import re
 from model_loader import groq_client
 
 
 class Predictor:
     """
-    Asperic Consequence-Aware Predictor
-    -----------------------------------
-    Purpose:
+    Asperic Consequence-Aware Predictor (v3.0)
+    ------------------------------------------
+    Sole responsibility:
     - Estimate consequence of being wrong
-    - Signal responsibility & verification needs
-    - Route queries safely (NOT compute-based)
+    - Output conservative, monotonic-safe routing
     """
+
+    VERSION = "v3.0-consequence-safe"
+
+    ROUTES = {
+        "LOW_STAKES",
+        "INFORMATIONAL",
+        "DECISION_SUPPORT",
+        "ACCOUNTABILITY_REQUIRED",
+    }
 
     def __init__(self):
         self.SCOUT = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-        # High-risk domains (deterministic guardrails)
+        # Deterministic domain indicators (ANNOTATION only)
         self.HIGH_RISK_KEYWORDS = [
             "legal", "law", "contract", "tax", "gst", "compliance",
             "finance", "investment", "money", "loan",
@@ -25,20 +32,15 @@ class Predictor:
             "immigration", "visa", "exam", "certificate"
         ]
 
-        # System evolution metadata
-        self.PREDICTOR_VERSION = "v2.0-consequence-aware"
-
     # =========================
     # PUBLIC ENTRY
     # =========================
     def predict(self, text: str) -> dict:
         """
-        Returns a routing decision object.
-
-        Output schema:
+        Output schema (stable):
         {
-            "route": "LOW_STAKES" | "INFORMATIONAL" | "DECISION_SUPPORT" | "ACCOUNTABILITY_REQUIRED",
-            "confidence": float,
+            "route": str,
+            "confidence": float,   # routing certainty
             "signals": [str],
             "version": str
         }
@@ -46,51 +48,47 @@ class Predictor:
 
         signals = []
 
-        # --- PHASE 1: DETERMINISTIC RISK HEURISTICS ---
+        # ---------- PHASE 1: DETERMINISTIC ANNOTATION ----------
         lowered = text.lower()
 
-        if self._contains_sensitive_mask(text):
-            signals.append("sensitive_data_present")
-
         if self._contains_high_risk_keywords(lowered):
-            signals.append("high_risk_domain")
+            signals.append("heuristic:high_risk_domain")
 
-        # --- PHASE 2: LLM CONSEQUENCE ESTIMATION ---
+        # ---------- PHASE 2: LLM RISK ESTIMATION ----------
         llm_result = self._llm_consequence_estimate(text)
 
-        route = llm_result.get("route", "INFORMATIONAL")
+        route = llm_result.get("route", "ACCOUNTABILITY_REQUIRED")
         confidence = llm_result.get("confidence", 0.5)
         llm_signals = llm_result.get("signals", [])
 
-        signals.extend(llm_signals)
+        # Namespace LLM signals
+        signals.extend([f"llm:{s}" for s in llm_signals])
 
-        # --- PHASE 3: HARD ESCALATION RULES ---
-        if "high_risk_domain" in signals:
+        # ---------- PHASE 3: HARD SAFETY ESCALATION ----------
+        if "heuristic:high_risk_domain" in signals:
             route = "ACCOUNTABILITY_REQUIRED"
 
-        if "decision_request" in signals and route == "INFORMATIONAL":
-            route = "DECISION_SUPPORT"
+        if route not in self.ROUTES:
+            route = "ACCOUNTABILITY_REQUIRED"
+            signals.append("system:invalid_route_corrected")
 
         return {
             "route": route,
-            "confidence": round(confidence, 2),
-            "signals": list(set(signals)),
-            "version": self.PREDICTOR_VERSION
+            "confidence": round(self._normalize_confidence(confidence), 2),
+            "signals": sorted(set(signals)),
+            "version": self.VERSION
         }
 
     # =========================
-    # INTERNAL HELPERS
+    # INTERNAL
     # =========================
-    def _contains_sensitive_mask(self, text: str) -> bool:
-        return "[SENSITIVE" in text or "[DATA_MASK]" in text
-
     def _contains_high_risk_keywords(self, text: str) -> bool:
         return any(k in text for k in self.HIGH_RISK_KEYWORDS)
 
     def _llm_consequence_estimate(self, text: str) -> dict:
         """
         LLM estimates consequence of being wrong.
-        DOES NOT decide persona or refusal.
+        Failure MUST bias toward safety.
         """
 
         system_msg = (
@@ -103,12 +101,7 @@ class Predictor:
             "  \"confidence\": float (0.0 - 1.0),\n"
             "  \"signals\": [\"decision_request\", \"external_dependency\", "
             "\"regulatory_context\", \"user_accountability\"]\n"
-            "}\n\n"
-            "Definitions:\n"
-            "- LOW_STAKES: Casual, no impact if wrong\n"
-            "- INFORMATIONAL: Learning or explanation\n"
-            "- DECISION_SUPPORT: User may act on this\n"
-            "- ACCOUNTABILITY_REQUIRED: Legal, financial, safety, production impact\n"
+            "}\n"
         )
 
         try:
@@ -127,9 +120,16 @@ class Predictor:
         except Exception as e:
             print(f"⚠️ Predictor LLM failure: {e}")
 
-            # Safe fallback: informational, low confidence
+            # FAIL CLOSED (safe)
             return {
-                "route": "INFORMATIONAL",
-                "confidence": 0.3,
-                "signals": ["llm_uncertain"]
+                "route": "ACCOUNTABILITY_REQUIRED",
+                "confidence": 0.2,
+                "signals": ["llm:failure"]
             }
+
+    def _normalize_confidence(self, value) -> float:
+        try:
+            v = float(value)
+            return max(0.0, min(1.0, v))
+        except Exception:
+            return 0.5
