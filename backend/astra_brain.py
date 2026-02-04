@@ -47,14 +47,14 @@ class AstraBrain:
         if situation.verification_required:
             verification = self.intel.verify(user_question)
 
-            if verification["status"] == "ERROR" and situation.refusal_allowed:
+            if verification.get("status") == "ERROR" and situation.refusal_allowed:
                 return self._refusal_response(
                     reason="Verification process failed.",
                     needed=["Retry later", "Provide alternative sources"],
                     why="This situation requires verified correctness."
                 )
 
-            if verification["status"] == "INSUFFICIENT" and situation.refusal_allowed:
+            if verification.get("status") == "INSUFFICIENT" and situation.refusal_allowed:
                 return self._refusal_response(
                     reason="Insufficient verified information.",
                     needed=verification.get("gaps", []),
@@ -82,9 +82,8 @@ class AstraBrain:
                     context=context_text,
                     depth="STRUCTURED"
                 )
-
-        # ---- NON-RIGOROUS (SINGLE PASS) ----
         else:
+            # ---- NON-RIGOROUS (SINGLE PASS) ----
             raw_answer = self._single_pass(
                 question=user_question,
                 context=context_text,
@@ -113,7 +112,7 @@ class AstraBrain:
             system_role = "Provide a short, clear explanation."
         else:  # STRUCTURED
             system_role = (
-                "Solve step by step. "
+                "Solve the problem step by step. "
                 "Explain reasoning clearly and sequentially."
             )
 
@@ -128,7 +127,7 @@ class AstraBrain:
     # MULTI-PASS RIGOROUS MODE
     # =========================
     def _rigorous_multi_pass(self, question: str, context: str) -> str:
-        # -------- PASS 1: ANALYSIS (PRIVATE) --------
+        # -------- PASS 1: ANALYSIS --------
         analysis_prompt = (
             "Internal professional analysis only.\n"
             "Break down the problem.\n"
@@ -142,7 +141,7 @@ class AstraBrain:
             system_msg="You are a senior analyst."
         )
 
-        # -------- PASS 2: CRITIQUE (PRIVATE) --------
+        # -------- PASS 2: CRITIQUE --------
         critique_prompt = (
             "Critically review the analysis.\n"
             "Identify gaps, weak assumptions, missing constraints, or risks.\n"
@@ -155,7 +154,7 @@ class AstraBrain:
             system_msg="You are a strict professional reviewer."
         )
 
-        # -------- PASS 3: SYNTHESIS (PUBLIC) --------
+        # -------- PASS 3: SYNTHESIS --------
         synthesis_prompt = (
             "Produce the final professional answer.\n"
             "Use the analysis and critique below.\n"
@@ -182,10 +181,10 @@ class AstraBrain:
         self,
         answer: str,
         situation,
-        verification: dict | None,
+        verification,
         reasoning_decision
     ) -> dict:
-        verified = verification and verification.get("status") == "VERIFIED"
+        verified = bool(verification and verification.get("status") == "VERIFIED")
 
         return {
             "answer": answer,
@@ -228,6 +227,8 @@ class AstraBrain:
         return completion.choices[0].message.content.strip()
 
     def _security_scrub(self, text: str) -> str:
+        if not text:
+            return ""
         text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[SENSITIVE]', text)
         text = re.sub(r'\b[a-fA-F0-9]{32,}\b', '[SENSITIVE]', text)
         return text.replace("**", "").strip()
