@@ -1,6 +1,7 @@
 import re
-from groq import Groq
 import os
+import json
+from groq import Groq
 from dataclasses import dataclass
 
 
@@ -17,34 +18,33 @@ class ReasoningDecision:
 
 class ReasoningController:
     """
-    Asperic Reasoning Depth Controller
-    ----------------------------------
+    Asperic Reasoning Depth Controller (Hardened)
+    ---------------------------------------------
     Purpose:
     - Decide HOW MUCH thinking is required
-    - Independent of safety, policy, and verification
-    - No answering, no tone, no refusal
-
-    This is the missing cognitive layer.
+    - Never crash the system
+    - Degrades safely if LLM unavailable
     """
 
-    VERSION = "v1.0-cognitive-depth"
+    VERSION = "v1.1-cognitive-depth"
 
-    DEPTHS = {
-        "NONE",
-        "LIGHT",
-        "STRUCTURED",
-        "RIGOROUS"
-    }
+    DEPTHS = {"NONE", "LIGHT", "STRUCTURED", "RIGOROUS"}
 
+    # =========================
+    # INIT
+    # =========================
     def __init__(self):
         self.api_key = os.getenv("GROQ_API_KEY")
-        if not self.api_key:
-            raise EnvironmentError("CRITICAL: GROQ_API_KEY missing.")
 
-        self.client = Groq(api_key=self.api_key)
+        if not self.api_key:
+            print("⚠️ REASONING: GROQ_API_KEY missing. LLM depth disabled.")
+            self.client = None
+        else:
+            self.client = Groq(api_key=self.api_key)
+
         self.SCOUT = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-        # Deterministic linguistic cues (cheap + fast)
+        # Deterministic linguistic cues
         self.RIGOROUS_TRIGGERS = [
             "should i", "decide", "architecture", "design",
             "strategy", "risk", "production", "deploy",
@@ -61,10 +61,6 @@ class ReasoningController:
     # PUBLIC ENTRY
     # =========================
     def decide(self, query: str) -> ReasoningDecision:
-        """
-        Decide cognitive reasoning depth required.
-        """
-
         signals = []
 
         # ---------- PHASE 1: FAST HEURISTICS ----------
@@ -83,14 +79,18 @@ class ReasoningController:
         if any(t in lowered for t in self.STRUCTURED_TRIGGERS):
             signals.append("procedural_language")
 
-        # ---------- PHASE 2: LLM COGNITIVE ASSESSMENT ----------
-        llm_result = self._llm_assess_depth(query)
+        # ---------- PHASE 2: LLM ASSESSMENT (OPTIONAL) ----------
+        if self.client:
+            llm_result = self._llm_assess_depth(query)
+        else:
+            llm_result = {}
 
         depth = llm_result.get("depth", "LIGHT")
         confidence = llm_result.get("confidence", 0.5)
         llm_signals = llm_result.get("signals", [])
 
-        signals.extend(llm_signals)
+        if isinstance(llm_signals, list):
+            signals.extend(llm_signals)
 
         # ---------- PHASE 3: HARD OVERRIDES ----------
         if "high_stakes_language" in signals:
@@ -99,9 +99,11 @@ class ReasoningController:
         if depth not in self.DEPTHS:
             depth = "LIGHT"
 
+        confidence = self._clamp(confidence)
+
         return self._decision(
             depth=depth,
-            confidence=round(confidence, 2),
+            confidence=confidence,
             signals=list(set(signals))
         )
 
@@ -109,9 +111,6 @@ class ReasoningController:
     # INTERNAL HELPERS
     # =========================
     def _is_trivial(self, query: str) -> bool:
-        """
-        Detect very simple factual questions.
-        """
         short = len(query.split()) <= 5
         simple_pattern = bool(
             re.match(r"^(what is|define|meaning of)\b", query.lower())
@@ -119,10 +118,6 @@ class ReasoningController:
         return short and simple_pattern
 
     def _llm_assess_depth(self, query: str) -> dict:
-        """
-        LLM classifies reasoning depth needed.
-        """
-
         system_msg = (
             "You are a cognitive complexity classifier.\n"
             "Decide how much reasoning is REQUIRED to answer the query correctly.\n\n"
@@ -131,12 +126,7 @@ class ReasoningController:
             "  \"depth\": \"NONE\" | \"LIGHT\" | \"STRUCTURED\" | \"RIGOROUS\",\n"
             "  \"confidence\": float (0.0 - 1.0),\n"
             "  \"signals\": [\"decision\", \"analysis\", \"risk\", \"multi_step\"]\n"
-            "}\n\n"
-            "Definitions:\n"
-            "- NONE: Direct factual answer\n"
-            "- LIGHT: Short explanation\n"
-            "- STRUCTURED: Step-by-step reasoning\n"
-            "- RIGOROUS: Professional-grade reasoning with assumptions and constraints\n"
+            "}"
         )
 
         try:
@@ -150,15 +140,18 @@ class ReasoningController:
                 response_format={"type": "json_object"}
             )
 
-            return eval(completion.choices[0].message.content)
+            data = completion.choices[0].message.content
+            parsed = json.loads(data)
+
+            return {
+                "depth": parsed.get("depth"),
+                "confidence": parsed.get("confidence"),
+                "signals": parsed.get("signals", [])
+            }
 
         except Exception as e:
-            print(f"⚠️ ReasoningController LLM failure: {e}")
-            return {
-                "depth": "LIGHT",
-                "confidence": 0.4,
-                "signals": ["llm_uncertain"]
-            }
+            print(f"⚠️ REASONING: LLM assessment failed: {e}")
+            return {}
 
     def _decision(self, depth: str, confidence: float, signals: list) -> ReasoningDecision:
         return ReasoningDecision(
@@ -167,3 +160,10 @@ class ReasoningController:
             signals=signals,
             controller_version=self.VERSION
         )
+
+    def _clamp(self, value) -> float:
+        try:
+            v = float(value)
+            return max(0.0, min(1.0, round(v, 2)))
+        except Exception:
+            return 0.5
