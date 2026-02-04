@@ -6,10 +6,11 @@ from intelligence import IntelligenceCore
 
 class AstraBrain:
     """
-    Asperic Core Reasoning Node (Professional-Grade)
-    ------------------------------------------------
+    Asperic Core Reasoning Node (Production-Stable)
+    -----------------------------------------------
     - Executes reasoning by declared cognitive depth
-    - Multi-pass reasoning ONLY for RIGOROUS depth
+    - Multi-pass reasoning ONLY for RIGOROUS
+    - Graceful fallback to avoid timeouts
     - No inference of stakes, persona, or depth
     """
 
@@ -38,7 +39,7 @@ class AstraBrain:
         history = history or []
 
         # =========================
-        # 1. Verification (policy-gated)
+        # 1. VERIFICATION (POLICY-GATED)
         # =========================
         verification = None
         context_text = ""
@@ -63,13 +64,26 @@ class AstraBrain:
             context_text = verification.get("content", "")
 
         # =========================
-        # 2. Execute reasoning
+        # 2. REASONING EXECUTION
         # =========================
-        if reasoning_decision.depth == "RIGOROUS":
-            raw_answer = self._rigorous_multi_pass(
-                question=user_question,
-                context=context_text
-            )
+        raw_answer = ""
+
+        # ---- RIGOROUS (MULTI-PASS, GUARDED) ----
+        if reasoning_decision.depth == "RIGOROUS" and len(user_question) < 200:
+            try:
+                raw_answer = self._rigorous_multi_pass(
+                    question=user_question,
+                    context=context_text
+                )
+            except Exception:
+                # HARD FALLBACK → NEVER FAIL USER
+                raw_answer = self._single_pass(
+                    question=user_question,
+                    context=context_text,
+                    depth="STRUCTURED"
+                )
+
+        # ---- NON-RIGOROUS (SINGLE PASS) ----
         else:
             raw_answer = self._single_pass(
                 question=user_question,
@@ -80,7 +94,7 @@ class AstraBrain:
         clean_answer = self._security_scrub(raw_answer)
 
         # =========================
-        # 3. Structured response
+        # 3. STRUCTURED RESPONSE
         # =========================
         return self._build_response(
             answer=clean_answer,
@@ -90,7 +104,7 @@ class AstraBrain:
         )
 
     # =========================
-    # SINGLE PASS (NON-RIGOROUS)
+    # SINGLE PASS (FAST PATH)
     # =========================
     def _single_pass(self, question: str, context: str, depth: str) -> str:
         if depth == "NONE":
@@ -114,12 +128,12 @@ class AstraBrain:
     # MULTI-PASS RIGOROUS MODE
     # =========================
     def _rigorous_multi_pass(self, question: str, context: str) -> str:
-        # -------- PASS 1: ANALYSIS --------
+        # -------- PASS 1: ANALYSIS (PRIVATE) --------
         analysis_prompt = (
-            "You are performing internal professional analysis.\n"
-            "Do NOT write a final answer.\n"
-            "Break the problem down, list assumptions, constraints, risks.\n"
-            "Be precise and critical.\n\n"
+            "Internal professional analysis only.\n"
+            "Break down the problem.\n"
+            "List assumptions, constraints, and risks.\n"
+            "Do NOT produce a final answer.\n\n"
             f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
         )
 
@@ -128,11 +142,10 @@ class AstraBrain:
             system_msg="You are a senior analyst."
         )
 
-        # -------- PASS 2: CRITIC --------
+        # -------- PASS 2: CRITIQUE (PRIVATE) --------
         critique_prompt = (
-            "You are a critical reviewer.\n"
-            "Review the following analysis.\n"
-            "Identify logical gaps, missing assumptions, risks, or weak reasoning.\n"
+            "Critically review the analysis.\n"
+            "Identify gaps, weak assumptions, missing constraints, or risks.\n"
             "Suggest corrections.\n\n"
             f"ANALYSIS:\n{analysis}"
         )
@@ -142,15 +155,15 @@ class AstraBrain:
             system_msg="You are a strict professional reviewer."
         )
 
-        # -------- PASS 3: SYNTHESIS --------
+        # -------- PASS 3: SYNTHESIS (PUBLIC) --------
         synthesis_prompt = (
-            "You are a senior professional.\n"
-            "Using the analysis and critique below, produce a final answer.\n"
+            "Produce the final professional answer.\n"
+            "Use the analysis and critique below.\n"
             "The answer must be:\n"
             "- Clear\n"
             "- Defensible\n"
             "- Professionally worded\n"
-            "- Free of internal analysis\n"
+            "- Free of internal reasoning\n"
             "- Explicit about limits and uncertainty\n\n"
             f"ANALYSIS:\n{analysis}\n\n"
             f"CRITIQUE:\n{critique}\n\n"
