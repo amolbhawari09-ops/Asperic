@@ -1,20 +1,22 @@
 import re
 import uuid
 import datetime
+from typing import Dict, Any
 
 
 class OutputSystem:
     """
-    Asperic Universal Output System (v2.1)
+    Asperic Universal Output System (v3.0)
     -------------------------------------
-    • Risk-based rendering
-    • Consumer-first by default
-    • Enterprise metadata is explicit, not accidental
+    • Always JSON output (frontend-safe)
+    • Risk-aware rendering
+    • LIGHT vs PROFESSIONAL adaptive formatting
+    • No silent failures
     """
 
     def __init__(self, audience: str = "CONSUMER"):
         self.audience = audience.upper()
-        self._decision_id = self._generate_decision_id()
+        self.decision_id = self._generate_decision_id()
 
         self.HIGH_STAKES_TRIGGERS = [
             "should", "production", "invest", "legal",
@@ -24,108 +26,79 @@ class OutputSystem:
     # =========================
     # PUBLIC ENTRY
     # =========================
-    def assemble(self, response: dict, user_query: str = "") -> str:
+    def assemble(self, response: Dict[str, Any], user_query: str = "") -> Dict[str, Any]:
+        """
+        Always returns JSON.
+        NEVER returns plain text.
+        """
+
+        if not isinstance(response, dict):
+            return self._error_payload("Invalid response type")
+
         status = response.get("status", "CONDITIONAL")
 
         if status == "REFUSED":
-            return self._render_refusal(response.get("refusal", {}))
+            return self._refusal_payload(response.get("refusal", {}))
 
-        # --- LOW RISK: JUST ANSWER ---
-        if self._is_low_risk(user_query, response):
-            return self._clean(response.get("answer", ""))
+        answer = self._clean(response.get("answer", ""))
 
-        blocks = []
+        payload = {
+            "answer": answer,
+            "status": status,
+            "confidence": response.get("confidence", "Medium"),
+            "decision_id": self.decision_id,
+            "timestamp": self._timestamp(),
+        }
 
-        # --- ANSWER ---
-        blocks.append(self._clean(response.get("answer", "")))
+        # -------------------------
+        # Optional fields
+        # -------------------------
+        if response.get("assumptions"):
+            payload["assumptions"] = response["assumptions"]
 
-        # --- SOFT TRUST SIGNAL (NON-INTRUSIVE) ---
-        if self.audience == "CONSUMER" and response.get("confidence"):
-            blocks.append(f"({response['confidence']} confidence)")
-
-        # --- CONDITIONS ---
-        assumptions = response.get("assumptions") or []
-        if assumptions:
-            blocks.append(self._conditions_block(assumptions))
-
-        # --- LIMITS ---
-        limits = response.get("limits") or []
-        if limits and self._is_high_stakes(user_query):
-            blocks.append(self._limits_block(limits))
-
-        # --- ENTERPRISE METADATA ---
-        if self.audience == "ENTERPRISE":
-            blocks.append(self._enterprise_metadata(response))
-
-        return "\n\n".join(blocks)
-
-    # =========================
-    # RENDER BLOCKS
-    # =========================
-    def _render_refusal(self, refusal: dict) -> str:
-        blocks = ["I can’t answer this yet."]
-
-        if refusal.get("reason"):
-            blocks.append(refusal["reason"])
-
-        needed = refusal.get("needed", [])
-        if needed:
-            blocks.append(
-                "To move forward, I need:\n" +
-                "\n".join(f"- {self._clean(n)}" for n in needed)
-            )
-
-        if refusal.get("why_it_matters"):
-            blocks.append(refusal["why_it_matters"])
+        if self._is_high_stakes(user_query) and response.get("limits"):
+            payload["limits"] = response["limits"]
 
         if self.audience == "ENTERPRISE":
-            blocks.append(self._decision_metadata())
+            payload["enterprise"] = {
+                "ruleset": "strict",
+                "audit": True
+            }
 
-        return "\n\n".join(blocks)
-
-    def _conditions_block(self, assumptions: list) -> str:
-        return "This holds if:\n" + "\n".join(
-            f"- {self._clean(a)}" for a in assumptions
-        )
-
-    def _limits_block(self, limits: list) -> str:
-        return "Be aware:\n" + "\n".join(
-            f"- {self._clean(l)}" for l in limits
-        )
+        return payload
 
     # =========================
-    # ENTERPRISE
+    # REFUSAL
     # =========================
-    def _enterprise_metadata(self, response: dict) -> str:
-        return (
-            "--\n"
-            f"Status: {response.get('status')}\n"
-            f"Confidence: {response.get('confidence', 'N/A')}\n"
-            f"Decision ID: {self._decision_id}\n"
-            f"Time: {self._timestamp()}"
-        )
+    def _refusal_payload(self, refusal: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "answer": "I can’t answer this yet.",
+            "status": "REFUSED",
+            "reason": refusal.get("reason", ""),
+            "needed": refusal.get("needed", []),
+            "why_it_matters": refusal.get("why_it_matters", ""),
+            "decision_id": self.decision_id,
+            "timestamp": self._timestamp()
+        }
 
-    def _decision_metadata(self) -> str:
-        return (
-            "--\n"
-            f"Decision ID: {self._decision_id}\n"
-            f"Time: {self._timestamp()}"
-        )
+    # =========================
+    # ERROR FALLBACK
+    # =========================
+    def _error_payload(self, message: str) -> Dict[str, Any]:
+        return {
+            "answer": "",
+            "status": "ERROR",
+            "error": message,
+            "decision_id": self.decision_id,
+            "timestamp": self._timestamp()
+        }
 
     # =========================
     # RISK LOGIC
     # =========================
-    def _is_low_risk(self, query: str, response: dict) -> bool:
-        if not query:
-            return True
-        if response.get("assumptions"):
-            return False
-        return not self._is_high_stakes(query)
-
     def _is_high_stakes(self, query: str) -> bool:
         q = (query or "").lower()
-        keyword_hit = any(k in q for k in self.HIGH_STAKES_TRIGGERS)
-        return keyword_hit
+        return any(k in q for k in self.HIGH_STAKES_TRIGGERS)
 
     # =========================
     # UTILITIES
