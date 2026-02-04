@@ -6,13 +6,14 @@ from intelligence import IntelligenceCore
 
 class AstraBrain:
     """
-    Asperic Core Reasoning Node (Upgraded)
+    Asperic Core Reasoning Node (Hardened)
     -------------------------------------
     Responsibilities:
     - Execute reasoning based on declared cognitive depth
     - Obey SituationDecision (policy, risk)
     - Consume verification results (as input, not guesswork)
     - NEVER infer stakes, persona, or depth
+    - ALWAYS return a textual answer
     """
 
     def __init__(self, memory_shared=None, intelligence_core=None):
@@ -38,12 +39,7 @@ class AstraBrain:
     ) -> dict:
         """
         Professional reasoning entrypoint.
-
-        Inputs are DECLARED:
-        - situation (policy / risk)
-        - reasoning_decision (cognitive depth)
-
-        AstraBrain does NOT infer anything.
+        AstraBrain ALWAYS returns a response with an `answer` field.
         """
 
         history = history or []
@@ -59,16 +55,20 @@ class AstraBrain:
 
             if verification["status"] == "ERROR" and situation.refusal_allowed:
                 return self._refusal_response(
+                    answer="I can’t answer this yet due to a verification failure.",
                     reason="Verification process failed.",
                     needed=["Retry later", "Provide alternative sources"],
-                    why="This situation requires verified correctness."
+                    why="This situation requires verified correctness.",
+                    reasoning_decision=reasoning_decision
                 )
 
             if verification["status"] == "INSUFFICIENT" and situation.refusal_allowed:
                 return self._refusal_response(
+                    answer="I don’t have enough verified information to answer this safely.",
                     reason="Insufficient verified information.",
                     needed=verification.get("gaps", []),
-                    why="This decision requires verifiable accuracy."
+                    why="This decision requires verifiable accuracy.",
+                    reasoning_decision=reasoning_decision
                 )
 
             context_text = verification.get("content", "")
@@ -83,13 +83,14 @@ class AstraBrain:
         )
 
         clean_answer = self._security_scrub(raw_answer)
+        if not clean_answer:
+            clean_answer = "I’m unable to produce a meaningful answer at this time."
 
         # =========================
         # 3. Structured response
         # =========================
         return self._build_response(
             answer=clean_answer,
-            situation=situation,
             verification=verification,
             reasoning_decision=reasoning_decision
         )
@@ -98,28 +99,21 @@ class AstraBrain:
     # REASONING EXECUTION
     # =========================
     def _execute_reasoning(self, question: str, context: str, depth: str) -> str:
-        """
-        Executes reasoning strictly according to cognitive depth.
-        """
-
         if depth == "NONE":
             system_role = (
                 "Provide a direct, concise factual answer. "
                 "No explanation unless strictly necessary."
             )
-
         elif depth == "LIGHT":
             system_role = (
                 "Provide a short, clear explanation. "
                 "Avoid deep analysis or assumptions."
             )
-
         elif depth == "STRUCTURED":
             system_role = (
                 "Solve the problem step by step. "
                 "Explain reasoning clearly and sequentially."
             )
-
         elif depth == "RIGOROUS":
             system_role = (
                 "You are a senior professional expert.\n"
@@ -132,12 +126,8 @@ class AstraBrain:
                 "6. State limits and uncertainty\n"
                 "Avoid speculation. No skipped steps."
             )
-
         else:
-            # Fail-safe
-            system_role = (
-                "Provide a clear and accurate answer."
-            )
+            system_role = "Provide a clear and accurate answer."
 
         user_msg = (
             f"--- CONTEXT ---\n{context}\n--- END CONTEXT ---\n\n"
@@ -152,7 +142,6 @@ class AstraBrain:
     def _build_response(
         self,
         answer: str,
-        situation,
         verification: dict | None,
         reasoning_decision
     ) -> dict:
@@ -163,30 +152,35 @@ class AstraBrain:
             "status": "VERIFIED" if verified else "CONDITIONAL",
             "confidence": "High" if verified else "Medium",
             "reasoning_depth": reasoning_decision.depth,
-            "assumptions": (
-                ["External data assumed correct"]
-                if verified
-                else []
-            ),
-            "limits": (
-                verification.get("gaps", [])
-                if verification and verification.get("gaps")
-                else []
-            ),
+            "assumptions": ["External data assumed correct"] if verified else [],
+            "limits": verification.get("gaps", []) if verification else [],
             "next_steps": []
         }
 
     # =========================
-    # REFUSAL
+    # REFUSAL (NORMALIZED)
     # =========================
-    def _refusal_response(self, reason, needed, why) -> dict:
+    def _refusal_response(
+        self,
+        answer: str,
+        reason: str,
+        needed: list,
+        why: str,
+        reasoning_decision
+    ) -> dict:
         return {
+            "answer": answer,
             "status": "REFUSED",
+            "confidence": "Low",
+            "reasoning_depth": reasoning_decision.depth,
             "refusal": {
                 "reason": reason,
                 "needed": needed,
                 "why_it_matters": why
-            }
+            },
+            "assumptions": [],
+            "limits": needed,
+            "next_steps": needed
         }
 
     # =========================
