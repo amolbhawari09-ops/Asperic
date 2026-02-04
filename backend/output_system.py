@@ -1,117 +1,131 @@
 import re
-import uuid
 import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 
 class OutputSystem:
     """
-    Asperic Universal Output System (v3.0)
-    -------------------------------------
-    • Always JSON output (frontend-safe)
-    • Risk-aware rendering
-    • LIGHT vs PROFESSIONAL adaptive formatting
-    • No silent failures
+    Asperic Universal Output System (v3.1 – Hardened)
+    ------------------------------------------------
+    • Stable JSON schema
+    • No risk re-inference
+    • Frontend-safe typing
+    • Audit-friendly
     """
+
+    VERSION = "3.1-output-contract"
 
     def __init__(self, audience: str = "CONSUMER"):
         self.audience = audience.upper()
-        self.decision_id = self._generate_decision_id()
-
-        self.HIGH_STAKES_TRIGGERS = [
-            "should", "production", "invest", "legal",
-            "tax", "finance", "security", "risk", "decide"
-        ]
 
     # =========================
     # PUBLIC ENTRY
     # =========================
-    def assemble(self, response: Dict[str, Any], user_query: str = "") -> Dict[str, Any]:
+    def assemble(
+        self,
+        response: Dict[str, Any],
+        user_query: str = "",
+        decision_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Always returns JSON.
-        NEVER returns plain text.
+        Schema is stable.
         """
 
         if not isinstance(response, dict):
-            return self._error_payload("Invalid response type")
+            return self._error_payload("Invalid response object", decision_id)
 
         status = response.get("status", "CONDITIONAL")
 
         if status == "REFUSED":
-            return self._refusal_payload(response.get("refusal", {}))
+            return self._refusal_payload(
+                response.get("refusal", {}),
+                decision_id
+            )
 
-        answer = self._clean(response.get("answer", ""))
-
+        # -------- Core fields --------
         payload = {
-            "answer": answer,
+            "answer": self._clean(response.get("answer", "")),
             "status": status,
-            "confidence": response.get("confidence", "Medium"),
-            "decision_id": self.decision_id,
+            "confidence": self._normalize_confidence(response.get("confidence")),
+            "reasoning_depth": response.get("reasoning_depth"),
+            "assumptions": response.get("assumptions", []),
+            "limits": response.get("limits", []),
+            "next_steps": response.get("next_steps", []),
+            "decision_id": decision_id,
             "timestamp": self._timestamp(),
+            "version": self.VERSION
         }
 
-        # -------------------------
-        # Optional fields
-        # -------------------------
-        if response.get("assumptions"):
-            payload["assumptions"] = response["assumptions"]
-
-        if self._is_high_stakes(user_query) and response.get("limits"):
-            payload["limits"] = response["limits"]
-
-        if self.audience == "ENTERPRISE":
-            payload["enterprise"] = {
+        # -------- Enterprise metadata --------
+        payload["enterprise"] = (
+            {
                 "ruleset": "strict",
                 "audit": True
             }
+            if self.audience == "ENTERPRISE"
+            else None
+        )
 
         return payload
 
     # =========================
     # REFUSAL
     # =========================
-    def _refusal_payload(self, refusal: Dict[str, Any]) -> Dict[str, Any]:
+    def _refusal_payload(
+        self,
+        refusal: Dict[str, Any],
+        decision_id: Optional[str]
+    ) -> Dict[str, Any]:
         return {
-            "answer": "I can’t answer this yet.",
+            "answer": None,
             "status": "REFUSED",
-            "reason": refusal.get("reason", ""),
+            "reason": refusal.get("reason"),
             "needed": refusal.get("needed", []),
-            "why_it_matters": refusal.get("why_it_matters", ""),
-            "decision_id": self.decision_id,
-            "timestamp": self._timestamp()
+            "why_it_matters": refusal.get("why_it_matters"),
+            "confidence": 0.0,
+            "reasoning_depth": None,
+            "assumptions": [],
+            "limits": [],
+            "next_steps": [],
+            "decision_id": decision_id,
+            "timestamp": self._timestamp(),
+            "version": self.VERSION
         }
 
     # =========================
-    # ERROR FALLBACK
+    # ERROR
     # =========================
-    def _error_payload(self, message: str) -> Dict[str, Any]:
+    def _error_payload(
+        self,
+        message: str,
+        decision_id: Optional[str]
+    ) -> Dict[str, Any]:
         return {
-            "answer": "",
+            "answer": None,
             "status": "ERROR",
             "error": message,
-            "decision_id": self.decision_id,
-            "timestamp": self._timestamp()
+            "confidence": 0.0,
+            "decision_id": decision_id,
+            "timestamp": self._timestamp(),
+            "version": self.VERSION
         }
-
-    # =========================
-    # RISK LOGIC
-    # =========================
-    def _is_high_stakes(self, query: str) -> bool:
-        q = (query or "").lower()
-        return any(k in q for k in self.HIGH_STAKES_TRIGGERS)
 
     # =========================
     # UTILITIES
     # =========================
-    def _generate_decision_id(self) -> str:
-        return f"ASP-{uuid.uuid4().hex[:8].upper()}"
-
     def _timestamp(self) -> str:
         return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    def _normalize_confidence(self, value) -> float:
+        try:
+            v = float(value)
+            return max(0.0, min(1.0, round(v, 2)))
+        except Exception:
+            return 0.5
 
     def _clean(self, text: str) -> str:
         if not text:
             return ""
-        for p in ["As an AI", "I am", "According to", "Based on"]:
-            text = re.sub(p, "", text, flags=re.IGNORECASE)
-        return text.strip()
+        # Minimal safety clean only
+        return re.sub(r"\s{2,}", " ", text).strip()
