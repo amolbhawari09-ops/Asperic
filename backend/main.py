@@ -29,8 +29,8 @@ if sys.platform == "win32":
 
 app = FastAPI(
     title="Asperic Sovereign Intelligence Node",
-    version="3.1.0",
-    default_response_class=JSONResponse   # ✅ IMPORTANT FIX
+    version="3.1.1",
+    default_response_class=JSONResponse
 )
 
 # =========================
@@ -74,6 +74,30 @@ print("✅ SYSTEM CORE ONLINE")
 
 
 # =========================
+# RESPONSE NORMALIZER (CRITICAL)
+# =========================
+def normalize_assistant_text(brain_response: dict) -> str:
+    """
+    Guarantees a non-empty string for DB persistence.
+    """
+    if not isinstance(brain_response, dict):
+        return str(brain_response)
+
+    # Normal answer
+    if isinstance(brain_response.get("answer"), str) and brain_response["answer"].strip():
+        return brain_response["answer"].strip()
+
+    # Refusal case
+    if brain_response.get("status") == "REFUSED":
+        refusal = brain_response.get("refusal", {})
+        reason = refusal.get("reason", "Request refused.")
+        return f"[REFUSED] {reason}"
+
+    # Fallback (should never be hit, but safe)
+    return "[SYSTEM] No response generated."
+
+
+# =========================
 # MAIN ENDPOINT
 # =========================
 @app.post("/ask")
@@ -105,19 +129,19 @@ async def handle_request(request: QueryRequest):
         history = memory.get_history(chat_id)
 
         # =========================
-        # 3. CONSEQUENCE / RISK CLASSIFICATION
+        # 3. RISK CLASSIFICATION
         # =========================
         intent_signal = predictor.predict(clean_query)
 
         # =========================
-        # 4. POLICY SITUATION INTERPRETATION
+        # 4. POLICY INTERPRETATION
         # =========================
         situation = situation_interpreter.interpret(
             predictor_output=intent_signal
         )
 
         # =========================
-        # 5. COGNITIVE DEPTH DECISION
+        # 5. REASONING DEPTH
         # =========================
         reasoning_decision = reasoning_controller.decide(clean_query)
 
@@ -132,15 +156,11 @@ async def handle_request(request: QueryRequest):
         )
 
         # =========================
-        # 7. MEMORY PERSISTENCE
+        # 7. MEMORY PERSISTENCE (SAFE)
         # =========================
         memory.save_message(chat_id, "user", request.user_query)
 
-        assistant_text = (
-            brain_response.get("answer")
-            if isinstance(brain_response, dict)
-            else str(brain_response)
-        )
+        assistant_text = normalize_assistant_text(brain_response)
 
         memory.save_message(chat_id, "assistant", assistant_text)
         memory.ingest_interaction(
