@@ -53,6 +53,8 @@ class QueryRequest(BaseModel):
     user_query: str
     user_id: str = "user_1"
     project_id: str = "general"
+    thinking: str = "practical"
+    output: str = "simple"
 
 
 # =========================
@@ -98,7 +100,7 @@ def normalize_assistant_text(brain_response: dict) -> str:
 
 
 # =========================
-# MAIN ENDPOINT
+# MAIN ENDPOINT (FIXED)
 # =========================
 @app.post("/ask")
 async def handle_request(request: QueryRequest):
@@ -115,7 +117,17 @@ async def handle_request(request: QueryRequest):
 
         if security["status"] == "BLOCK":
             output_sys = OutputSystem(audience="CONSUMER")
-            return output_sys.assemble(security, request.user_query)
+            # ✅ FIX: Create proper response dict
+            block_response = {
+                "answer": security.get("reason", "Request blocked."),
+                "status": "BLOCKED",
+                "confidence": 1.0,
+                "reasoning_depth": None,
+                "assumptions": [],
+                "limits": [],
+                "next_steps": []
+            }
+            return output_sys.assemble(block_response, request.user_query)
 
         clean_query = security["content"]
 
@@ -155,12 +167,17 @@ async def handle_request(request: QueryRequest):
             reasoning_decision=reasoning_decision
         )
 
+        print(f"🧠 Brain Response Type: {type(brain_response)}")
+        print(f"🧠 Brain Response: {str(brain_response)[:200]}")
+
         # =========================
         # 7. MEMORY PERSISTENCE (SAFE)
         # =========================
         memory.save_message(chat_id, "user", request.user_query)
 
         assistant_text = normalize_assistant_text(brain_response)
+        
+        print(f"✅ Normalized Assistant Text: {assistant_text[:200]}")
 
         memory.save_message(chat_id, "assistant", assistant_text)
         memory.ingest_interaction(
@@ -170,8 +187,22 @@ async def handle_request(request: QueryRequest):
         )
 
         # =========================
-        # 8. OUTPUT RENDERING
+        # 8. OUTPUT RENDERING (FIXED) ✅
         # =========================
+        
+        # ✅ FIX: Build clean response dict with string answer
+        clean_response = {
+            "answer": assistant_text,  # ✅ Clean string only
+            "status": brain_response.get("status", "SUCCESS"),
+            "confidence": brain_response.get("confidence", 0.5),
+            "reasoning_depth": reasoning_decision.get("depth", "NONE"),
+            "assumptions": brain_response.get("assumptions", []),
+            "limits": brain_response.get("limits", []),
+            "next_steps": brain_response.get("next_steps", [])
+        }
+
+        print(f"📦 Clean Response: {clean_response}")
+
         audience = (
             "ENTERPRISE"
             if situation.ruleset == "strict"
@@ -180,17 +211,49 @@ async def handle_request(request: QueryRequest):
 
         output_sys = OutputSystem(audience=audience)
 
-        return output_sys.assemble(
-            brain_response,
+        final_output = output_sys.assemble(
+            clean_response,  # ✅ Pass cleaned response dict
             request.user_query
         )
+        
+        print(f"🎯 Final Output: {final_output}")
+
+        return final_output
 
     except Exception as e:
         print(f"❌ CRITICAL NODE FAILURE: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"NODE_ERROR: {str(e)}"
-        )
+        import traceback
+        traceback.print_exc()
+        
+        # ✅ FIX: Return proper error response
+        output_sys = OutputSystem(audience="CONSUMER")
+        error_response = {
+            "answer": f"System error: {str(e)}",
+            "status": "ERROR",
+            "confidence": 0.0,
+            "reasoning_depth": None,
+            "assumptions": [],
+            "limits": [],
+            "next_steps": []
+        }
+        return output_sys.assemble(error_response, request.user_query)
+
+
+# =========================
+# HEALTH CHECK
+# =========================
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "online",
+        "version": "3.1.1",
+        "timestamp": import_datetime()
+    }
+
+
+def import_datetime():
+    import datetime
+    return datetime.datetime.utcnow().isoformat()
 
 
 # =========================
