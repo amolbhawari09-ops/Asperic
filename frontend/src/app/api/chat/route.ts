@@ -14,24 +14,34 @@ type ChatRequest = {
   output?: "simple" | "professional";
 };
 
+type BackendResponse = {
+  answer: string;
+  status?: string;
+  confidence?: string;
+  reasoning_depth?: string;
+  assumptions?: string[];
+  limits?: string[];
+};
+
+/* ---------------- HANDLER ---------------- */
+
 export async function POST(req: Request) {
   const requestId = crypto.randomUUID();
 
   try {
-    /* ---------------- ENV VALIDATION ---------------- */
+    /* ---------------- ENV ---------------- */
     const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
     if (!SUPABASE_URL || !SUPABASE_KEY || !API_URL) {
-      console.error("❌ ENV MISSING");
       return NextResponse.json(
         { error: "Server misconfigured" },
         { status: 500 }
       );
     }
 
-    /* ---------------- SUPABASE SSR ---------------- */
+    /* ---------------- SUPABASE ---------------- */
     const cookieStore = cookies();
 
     const supabase = createServerClient(
@@ -45,9 +55,7 @@ export async function POST(req: Request) {
               cookiesToSet.forEach(({ name, value, options }) => {
                 cookieStore.set(name, value, options);
               });
-            } catch {
-              // no-op (server components)
-            }
+            } catch {}
           },
         },
       }
@@ -59,22 +67,11 @@ export async function POST(req: Request) {
     } = await supabase.auth.getSession();
 
     if (!session) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     /* ---------------- BODY ---------------- */
-    let body: ChatRequest;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid JSON body" },
-        { status: 422 }
-      );
-    }
+    const body: ChatRequest = await req.json();
 
     const {
       chat_id,
@@ -91,16 +88,16 @@ export async function POST(req: Request) {
     }
 
     /* ---------------- CHAT OWNERSHIP ---------------- */
-    const { data: chat, error: chatError } = await supabase
+    const { data: chat } = await supabase
       .from("chats")
       .select("id")
       .eq("id", chat_id)
       .eq("user_id", session.user.id)
       .single();
 
-    if (chatError || !chat) {
+    if (!chat) {
       return NextResponse.json(
-        { error: "Chat not found or forbidden" },
+        { error: "Chat not found" },
         { status: 403 }
       );
     }
@@ -133,33 +130,31 @@ export async function POST(req: Request) {
     clearTimeout(timeout);
 
     if (!backendRes.ok) {
-      const errorText = await backendRes.text();
-      console.error("❌ BACKEND FAIL", {
-        requestId,
-        status: backendRes.status,
-        errorText,
-      });
-
       return NextResponse.json(
         { error: "AI backend failure" },
         { status: 502 }
       );
     }
 
-    const assistantText = await backendRes.text();
+    /* ---------------- PARSE RESPONSE (FIX) ---------------- */
+    const backendJson: BackendResponse = await backendRes.json();
 
-    /* ---------------- SAVE ASSISTANT ---------------- */
+    const cleanAnswer =
+      typeof backendJson.answer === "string"
+        ? backendJson.answer
+        : "No answer generated.";
+
+    /* ---------------- SAVE CLEAN ANSWER ---------------- */
     const { error: insertError } = await supabase
       .from("messages")
       .insert({
         chat_id,
         user_id: session.user.id,
         role: "assistant",
-        content: assistantText,
+        content: cleanAnswer, // ✅ ONLY TEXT
       });
 
     if (insertError) {
-      console.error("❌ DB INSERT FAIL", insertError);
       return NextResponse.json(
         { error: "Failed to save message" },
         { status: 500 }
@@ -167,7 +162,15 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json(
-      { success: true, requestId },
+      {
+        success: true,
+        requestId,
+        meta: {
+          status: backendJson.status,
+          confidence: backendJson.confidence,
+          reasoning_depth: backendJson.reasoning_depth,
+        },
+      },
       { status: 200 }
     );
 
