@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -16,6 +16,7 @@ from predictor import Predictor
 from situation_interpreter import SituationInterpreter
 from reasoning_controller import ReasoningController
 from astra_brain import AstraBrain
+from semantic_engine import SemanticEngine
 from memory import SupabaseMemory
 from output_system import OutputSystem
 from model_loader import embedding_provider
@@ -29,7 +30,7 @@ if sys.platform == "win32":
 
 app = FastAPI(
     title="Asperic Sovereign Intelligence Node",
-    version="3.1.2",  # Bumping version for the fix
+    version="4.0.0",  # 🚀 FULL COGNITION ACTIVATED
     default_response_class=JSONResponse
 )
 
@@ -53,61 +54,52 @@ class QueryRequest(BaseModel):
     user_query: str
     user_id: str = "user_1"
     project_id: str = "general"
-    thinking: str = "practical"
-    output: str = "simple"
 
 
 # =========================
 # BOOTSTRAP CORE
 # =========================
-print("🚀 BOOTING ASPERIC SOVEREIGN CORE...")
+print("🚀 BOOTING ASPERIC FULL COGNITION CORE...")
 
 _ = embedding_provider.model
 print("✅ EMBEDDING MODEL PRE-WARMED")
 
 encoder = AspericEncoder()
+semantic_engine = SemanticEngine()
 predictor = Predictor()
 reasoning_controller = ReasoningController()
 situation_interpreter = SituationInterpreter()
 memory = SupabaseMemory()
 brain = AstraBrain(memory_shared=memory)
 
+print("🧠 SEMANTIC ENGINE ONLINE")
 print("✅ SYSTEM CORE ONLINE")
 
 
 # =========================
-# RESPONSE NORMALIZER (CRITICAL)
+# RESPONSE NORMALIZER
 # =========================
 def normalize_assistant_text(brain_response: dict) -> str:
-    """
-    Guarantees a non-empty string for DB persistence.
-    """
     if not isinstance(brain_response, dict):
         return str(brain_response)
 
-    # Normal answer
     if isinstance(brain_response.get("answer"), str) and brain_response["answer"].strip():
         return brain_response["answer"].strip()
 
-    # Refusal case
     if brain_response.get("status") == "REFUSED":
         refusal = brain_response.get("refusal", {})
-        reason = refusal.get("reason", "Request refused.")
-        return f"[REFUSED] {reason}"
+        return f"[REFUSED] {refusal.get('reason', 'Request refused.')}"
 
-    # Fallback (should never be hit, but safe)
     return "[SYSTEM] No response generated."
 
 
 # =========================
-# MAIN ENDPOINT (UPGRADED)
+# MAIN ENDPOINT
 # =========================
 @app.post("/ask")
 async def handle_request(request: QueryRequest):
     """
-    FINAL ORCHESTRATION PIPELINE:
-    Encoder → Predictor → SituationInterpreter
-           → ReasoningController → AstraBrain → OutputSystem
+    FULL ASPERIC COGNITION PIPELINE
     """
     try:
         # =========================
@@ -117,16 +109,18 @@ async def handle_request(request: QueryRequest):
 
         if security["status"] == "BLOCK":
             output_sys = OutputSystem(audience="CONSUMER")
-            block_response = {
-                "answer": security.get("reason", "Request blocked."),
-                "status": "BLOCKED",
-                "confidence": 1.0,
-                "reasoning_depth": None,
-                "assumptions": [],
-                "limits": [],
-                "next_steps": []
-            }
-            return output_sys.assemble(block_response, request.user_query)
+            return output_sys.assemble(
+                {
+                    "answer": security.get("reason", "Request blocked."),
+                    "status": "BLOCKED",
+                    "confidence": 1.0,
+                    "reasoning_depth": None,
+                    "assumptions": [],
+                    "limits": [],
+                    "next_steps": []
+                },
+                request.user_query
+            )
 
         clean_query = security["content"]
 
@@ -140,55 +134,47 @@ async def handle_request(request: QueryRequest):
         history = memory.get_history(chat_id)
 
         # =========================
-        # 3. RISK CLASSIFICATION
+        # 3. SEMANTIC ANALYSIS (🧠 CORE)
+        # =========================
+        semantic_profile = semantic_engine.analyze(clean_query)
+
+        # =========================
+        # 4. RISK CLASSIFICATION
         # =========================
         intent_signal = predictor.predict(clean_query)
 
         # =========================
-        # 4. POLICY INTERPRETATION
+        # 5. POLICY INTERPRETATION
         # =========================
         situation = situation_interpreter.interpret(
             predictor_output=intent_signal
         )
 
         # =========================
-        # 5. REASONING DEPTH (FIXED SECTION 🛠️)
+        # 6. SEMANTIC REASONING DEPTH
         # =========================
-        raw_decision = reasoning_controller.decide(clean_query)
-        
-        # FIX: The "Anti-Crash" Converter
-        # This guarantees reasoning_decision is ALWAYS a dictionary, never an object.
-        if hasattr(raw_decision, "model_dump"):
-            reasoning_decision = raw_decision.model_dump()
-        elif hasattr(raw_decision, "dict"):
-            reasoning_decision = raw_decision.dict()
-        elif isinstance(raw_decision, dict):
-            reasoning_decision = raw_decision
-        else:
-            # Fallback for weird objects
-            reasoning_decision = {"depth": "standard", "thinking": "practical"}
+        reasoning_decision = reasoning_controller.decide(
+            clean_query,
+            semantic_profile
+        )
 
         # =========================
-        # 6. PROFESSIONAL REASONING
+        # 7. SEMANTIC REASONING EXECUTION
         # =========================
         brain_response = brain.chat(
             user_question=clean_query,
             history=history,
             situation=situation,
-            reasoning_decision=reasoning_decision
+            reasoning_decision=reasoning_decision,
+            semantic_profile=semantic_profile
         )
 
-        print(f"🧠 Brain Response Type: {type(brain_response)}")
-        # print(f"🧠 Brain Response: {str(brain_response)[:200]}")
-
         # =========================
-        # 7. MEMORY PERSISTENCE (SAFE)
+        # 8. MEMORY PERSISTENCE
         # =========================
         memory.save_message(chat_id, "user", request.user_query)
 
         assistant_text = normalize_assistant_text(brain_response)
-        
-        print(f"✅ Normalized Assistant Text: {assistant_text[:200]}")
 
         memory.save_message(chat_id, "assistant", assistant_text)
         memory.ingest_interaction(
@@ -198,22 +184,18 @@ async def handle_request(request: QueryRequest):
         )
 
         # =========================
-        # 8. OUTPUT RENDERING (FIXED) ✅
+        # 9. OUTPUT RENDERING
         # =========================
-        
-        # ✅ FIX: Build clean response dict with string answer
         clean_response = {
             "answer": assistant_text,
-            "session_id": chat_id, # ✅ ADDED: Sends ID to frontend to fix URL issues
+            "session_id": chat_id,
             "status": brain_response.get("status", "SUCCESS"),
             "confidence": brain_response.get("confidence", 0.5),
-            "reasoning_depth": reasoning_decision.get("depth", "NONE"), # This is now safe
+            "reasoning_depth": reasoning_decision.depth,
             "assumptions": brain_response.get("assumptions", []),
             "limits": brain_response.get("limits", []),
             "next_steps": brain_response.get("next_steps", [])
         }
-
-        print(f"📦 Clean Response: {clean_response}")
 
         audience = (
             "ENTERPRISE"
@@ -222,17 +204,10 @@ async def handle_request(request: QueryRequest):
         )
 
         output_sys = OutputSystem(audience=audience)
+        final_output = output_sys.assemble(clean_response, request.user_query)
 
-        final_output = output_sys.assemble(
-            clean_response,
-            request.user_query
-        )
-        
-        # Ensure session_id is in the final output even after assembly
-        if isinstance(final_output, dict):
-            final_output["session_id"] = chat_id
-        
-        print(f"🎯 Final Output: {final_output}")
+        final_output["session_id"] = chat_id
+        final_output["semantic_profile"] = semantic_profile  # optional but useful
 
         return final_output
 
@@ -240,19 +215,20 @@ async def handle_request(request: QueryRequest):
         print(f"❌ CRITICAL NODE FAILURE: {str(e)}")
         import traceback
         traceback.print_exc()
-        
-        # ✅ FIX: Return proper error response
+
         output_sys = OutputSystem(audience="CONSUMER")
-        error_response = {
-            "answer": f"System error: {str(e)}",
-            "status": "ERROR",
-            "confidence": 0.0,
-            "reasoning_depth": None,
-            "assumptions": [],
-            "limits": [],
-            "next_steps": []
-        }
-        return output_sys.assemble(error_response, request.user_query)
+        return output_sys.assemble(
+            {
+                "answer": f"System error: {str(e)}",
+                "status": "ERROR",
+                "confidence": 0.0,
+                "reasoning_depth": None,
+                "assumptions": [],
+                "limits": [],
+                "next_steps": []
+            },
+            request.user_query
+        )
 
 
 # =========================
@@ -260,16 +236,12 @@ async def handle_request(request: QueryRequest):
 # =========================
 @app.get("/health")
 async def health_check():
+    import datetime
     return {
         "status": "online",
-        "version": "3.1.2",
-        "timestamp": import_datetime()
+        "version": "4.0.0",
+        "timestamp": datetime.datetime.utcnow().isoformat()
     }
-
-
-def import_datetime():
-    import datetime
-    return datetime.datetime.utcnow().isoformat()
 
 
 # =========================
