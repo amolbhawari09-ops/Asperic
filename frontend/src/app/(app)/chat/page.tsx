@@ -57,7 +57,7 @@ export default function ChatPage() {
     init();
   }, []);
 
-  /* ------------ FETCH CHATS ------------ */
+  /* ------------ FETCH CHATS (FIXED) ------------ */
 
   const fetchChats = async (userId: string) => {
     const { data } = await supabase
@@ -67,13 +67,27 @@ export default function ChatPage() {
       .order("created_at", { ascending: false });
 
     setChats(data || []);
-    if (data && data.length > 0) setActiveChatId(data[0].id);
-    else createNewSession(userId);
+    
+    // ✅ FIX: Restore last active session from localStorage
+    const savedChatId = localStorage.getItem("activeChatId");
+    
+    if (data && data.length > 0) {
+      // Check if saved chat still exists
+      if (savedChatId && data.find(c => c.id === savedChatId)) {
+        setActiveChatId(savedChatId);
+      } else {
+        setActiveChatId(data[0].id);
+        localStorage.setItem("activeChatId", data[0].id);
+      }
+    } else {
+      // ✅ Only create new session if NO chats exist
+      createNewSession(userId);
+    }
 
     setLoading(false);
   };
 
-  /* ---------- CREATE SESSION ---------- */
+  /* ---------- CREATE SESSION (FIXED) ---------- */
 
   const createNewSession = async (forceUserId?: string) => {
     const uid = forceUserId || user?.id;
@@ -87,6 +101,10 @@ export default function ChatPage() {
 
     setChats(prev => [data, ...prev]);
     setActiveChatId(data.id);
+    
+    // ✅ FIX: Save to localStorage
+    localStorage.setItem("activeChatId", data.id);
+    
     setMessages([]);
   };
 
@@ -106,6 +124,10 @@ export default function ChatPage() {
     };
 
     loadMessages();
+    
+    // ✅ FIX: Save active chat when it changes
+    localStorage.setItem("activeChatId", activeChatId);
+    
   }, [activeChatId]);
 
   /* ------------ SEND MESSAGE (FIXED) ------------ */
@@ -119,12 +141,19 @@ export default function ChatPage() {
 
     try {
       // 1️⃣ Save user message
-      await supabase.from("messages").insert({
-        chat_id: activeChatId,
-        user_id: user.id,
-        role: "user",
-        content: userText,
-      });
+      const { data: userMsg } = await supabase
+        .from("messages")
+        .insert({
+          chat_id: activeChatId,
+          user_id: user.id,
+          role: "user",
+          content: userText,
+        })
+        .select()
+        .single();
+
+      // ✅ Immediately show user message
+      setMessages(prev => [...prev, userMsg]);
 
       // 2️⃣ Call backend
       const res = await fetch("/api/chat", {
@@ -138,23 +167,67 @@ export default function ChatPage() {
         }),
       });
 
-      const data = await res.json();
+      // ✅ FIX: Handle both JSON object and JSON string
+      let data;
+      const contentType = res.headers.get("content-type");
+      
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { answer: text };
+        }
+      }
 
-      // ✅ ONLY extract human-readable answer
-      const assistantText =
-        data && typeof data === "object" && data.answer
-          ? data.answer
-          : "⚠️ No response generated.";
+      console.log("📦 API Response:", data); // Debug log
+
+      // ✅ FIXED: Extract answer properly
+      let assistantText;
+      
+      if (typeof data === "string") {
+        // If entire response is a string, try to parse it
+        try {
+          const parsed = JSON.parse(data);
+          assistantText = parsed.answer || data;
+        } catch {
+          assistantText = data;
+        }
+      } else if (data && typeof data === "object") {
+        assistantText = data.answer || JSON.stringify(data);
+      } else {
+        assistantText = "⚠️ No response generated.";
+      }
 
       // 3️⃣ Save assistant message (TEXT ONLY)
-      await supabase.from("messages").insert({
-        chat_id: activeChatId,
-        role: "assistant",
-        content: assistantText,
-      });
+      const { data: assistantMsg } = await supabase
+        .from("messages")
+        .insert({
+          chat_id: activeChatId,
+          role: "assistant",
+          content: assistantText,
+        })
+        .select()
+        .single();
+
+      // ✅ Immediately show assistant message
+      setMessages(prev => [...prev, assistantMsg]);
 
     } catch (err) {
       console.error("❌ Send message failed:", err);
+      
+      // ✅ Show error message to user
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role: "assistant",
+          content: "⚠️ Error: Could not get response. Please try again.",
+          created_at: new Date().toISOString(),
+        } as Message,
+      ]);
     } finally {
       setSending(false);
     }
@@ -165,6 +238,13 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  /* ------------ SWITCH CHAT (NEW) ------------ */
+  
+  const switchChat = (chatId: string) => {
+    setActiveChatId(chatId);
+    localStorage.setItem("activeChatId", chatId);
+  };
 
   const activeChat =
     chats.find(c => c.id === activeChatId) ||
@@ -236,6 +316,13 @@ export default function ChatPage() {
               </div>
             </div>
           ))}
+          {sending && (
+            <div className="flex justify-start">
+              <div className="bg-white/10 border border-white/5 px-4 py-3 rounded-lg text-sm">
+                <span className="animate-pulse">Thinking...</span>
+              </div>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
@@ -245,14 +332,15 @@ export default function ChatPage() {
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && sendMessage()}
+              onKeyDown={e => e.key === "Enter" && !sending && sendMessage()}
               placeholder="Type your instruction…"
-              className="flex-1 bg-white/5 border border-white/10 px-4 py-3 rounded-lg outline-none"
+              disabled={sending}
+              className="flex-1 bg-white/5 border border-white/10 px-4 py-3 rounded-lg outline-none disabled:opacity-50"
             />
             <button
               onClick={sendMessage}
               disabled={sending}
-              className="bg-white/10 hover:bg-white/20 px-4 rounded-lg"
+              className="bg-white/10 hover:bg-white/20 px-4 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus className="rotate-90" size={20} />
             </button>
