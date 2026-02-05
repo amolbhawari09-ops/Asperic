@@ -29,7 +29,7 @@ if sys.platform == "win32":
 
 app = FastAPI(
     title="Asperic Sovereign Intelligence Node",
-    version="3.1.1",
+    version="3.1.2",  # Bumping version for the fix
     default_response_class=JSONResponse
 )
 
@@ -100,7 +100,7 @@ def normalize_assistant_text(brain_response: dict) -> str:
 
 
 # =========================
-# MAIN ENDPOINT (FIXED)
+# MAIN ENDPOINT (UPGRADED)
 # =========================
 @app.post("/ask")
 async def handle_request(request: QueryRequest):
@@ -117,7 +117,6 @@ async def handle_request(request: QueryRequest):
 
         if security["status"] == "BLOCK":
             output_sys = OutputSystem(audience="CONSUMER")
-            # ✅ FIX: Create proper response dict
             block_response = {
                 "answer": security.get("reason", "Request blocked."),
                 "status": "BLOCKED",
@@ -153,9 +152,21 @@ async def handle_request(request: QueryRequest):
         )
 
         # =========================
-        # 5. REASONING DEPTH
+        # 5. REASONING DEPTH (FIXED SECTION 🛠️)
         # =========================
-        reasoning_decision = reasoning_controller.decide(clean_query)
+        raw_decision = reasoning_controller.decide(clean_query)
+        
+        # FIX: The "Anti-Crash" Converter
+        # This guarantees reasoning_decision is ALWAYS a dictionary, never an object.
+        if hasattr(raw_decision, "model_dump"):
+            reasoning_decision = raw_decision.model_dump()
+        elif hasattr(raw_decision, "dict"):
+            reasoning_decision = raw_decision.dict()
+        elif isinstance(raw_decision, dict):
+            reasoning_decision = raw_decision
+        else:
+            # Fallback for weird objects
+            reasoning_decision = {"depth": "standard", "thinking": "practical"}
 
         # =========================
         # 6. PROFESSIONAL REASONING
@@ -168,7 +179,7 @@ async def handle_request(request: QueryRequest):
         )
 
         print(f"🧠 Brain Response Type: {type(brain_response)}")
-        print(f"🧠 Brain Response: {str(brain_response)[:200]}")
+        # print(f"🧠 Brain Response: {str(brain_response)[:200]}")
 
         # =========================
         # 7. MEMORY PERSISTENCE (SAFE)
@@ -192,10 +203,11 @@ async def handle_request(request: QueryRequest):
         
         # ✅ FIX: Build clean response dict with string answer
         clean_response = {
-            "answer": assistant_text,  # ✅ Clean string only
+            "answer": assistant_text,
+            "session_id": chat_id, # ✅ ADDED: Sends ID to frontend to fix URL issues
             "status": brain_response.get("status", "SUCCESS"),
             "confidence": brain_response.get("confidence", 0.5),
-            "reasoning_depth": reasoning_decision.get("depth", "NONE"),
+            "reasoning_depth": reasoning_decision.get("depth", "NONE"), # This is now safe
             "assumptions": brain_response.get("assumptions", []),
             "limits": brain_response.get("limits", []),
             "next_steps": brain_response.get("next_steps", [])
@@ -212,9 +224,13 @@ async def handle_request(request: QueryRequest):
         output_sys = OutputSystem(audience=audience)
 
         final_output = output_sys.assemble(
-            clean_response,  # ✅ Pass cleaned response dict
+            clean_response,
             request.user_query
         )
+        
+        # Ensure session_id is in the final output even after assembly
+        if isinstance(final_output, dict):
+            final_output["session_id"] = chat_id
         
         print(f"🎯 Final Output: {final_output}")
 
@@ -246,7 +262,7 @@ async def handle_request(request: QueryRequest):
 async def health_check():
     return {
         "status": "online",
-        "version": "3.1.1",
+        "version": "3.1.2",
         "timestamp": import_datetime()
     }
 
