@@ -42,6 +42,14 @@ export default function ChatPage() {
   const [outputMode, setOutputMode] =
     useState<"simple" | "professional">("simple");
 
+  /* ------------ URL HELPER (NEW FIX) ------------ */
+  // This updates the browser URL without reloading page
+  const updateUrl = (chatId: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("chatId", chatId);
+    window.history.replaceState({}, "", url.toString());
+  };
+
   /* ------------ AUTH CHECK ------------ */
 
   useEffect(() => {
@@ -52,42 +60,51 @@ export default function ChatPage() {
         return;
       }
       setUser(data.session.user);
-      fetchChats(data.session.user.id);
+      
+      // ✅ FIX: Check URL first, then LocalStorage
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlChatId = urlParams.get("chatId");
+      
+      fetchChats(data.session.user.id, urlChatId);
     };
     init();
   }, []);
 
-  /* ------------ FETCH CHATS (FIXED) ------------ */
+  /* ------------ FETCH CHATS (UPGRADED) ------------ */
 
-  const fetchChats = async (userId: string) => {
+  const fetchChats = async (userId: string, urlChatId?: string | null) => {
     const { data } = await supabase
       .from("chats")
       .select("*")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
-    setChats(data || []);
+    const loadedChats = data || [];
+    setChats(loadedChats);
     
-    // ✅ FIX: Restore last active session from localStorage
+    // ✅ PRIORITY: URL ID -> LocalStorage -> Most Recent -> New
     const savedChatId = localStorage.getItem("activeChatId");
-    
-    if (data && data.length > 0) {
-      // Check if saved chat still exists
-      if (savedChatId && data.find(c => c.id === savedChatId)) {
-        setActiveChatId(savedChatId);
+    const targetId = urlChatId || savedChatId;
+
+    if (loadedChats.length > 0) {
+      if (targetId && loadedChats.find(c => c.id === targetId)) {
+        setActiveChatId(targetId);
+        updateUrl(targetId); // Ensure URL is synced
       } else {
-        setActiveChatId(data[0].id);
-        localStorage.setItem("activeChatId", data[0].id);
+        // Default to most recent
+        setActiveChatId(loadedChats[0].id);
+        localStorage.setItem("activeChatId", loadedChats[0].id);
+        updateUrl(loadedChats[0].id);
       }
     } else {
-      // ✅ Only create new session if NO chats exist
+      // No chats exist at all, create one
       createNewSession(userId);
     }
 
     setLoading(false);
   };
 
-  /* ---------- CREATE SESSION (FIXED) ---------- */
+  /* ---------- CREATE SESSION (UPGRADED) ---------- */
 
   const createNewSession = async (forceUserId?: string) => {
     const uid = forceUserId || user?.id;
@@ -99,13 +116,16 @@ export default function ChatPage() {
       .select()
       .single();
 
-    setChats(prev => [data, ...prev]);
-    setActiveChatId(data.id);
-    
-    // ✅ FIX: Save to localStorage
-    localStorage.setItem("activeChatId", data.id);
-    
-    setMessages([]);
+    if (data) {
+      setChats(prev => [data, ...prev]);
+      setActiveChatId(data.id);
+      
+      // ✅ FIX: Lock session immediately in Storage AND URL
+      localStorage.setItem("activeChatId", data.id);
+      updateUrl(data.id);
+      
+      setMessages([]);
+    }
   };
 
   /* ---------- FETCH MESSAGES ---------- */
@@ -125,12 +145,13 @@ export default function ChatPage() {
 
     loadMessages();
     
-    // ✅ FIX: Save active chat when it changes
+    // Sync persistence
     localStorage.setItem("activeChatId", activeChatId);
+    updateUrl(activeChatId);
     
   }, [activeChatId]);
 
-  /* ------------ SEND MESSAGE (FIXED) ------------ */
+  /* ------------ SEND MESSAGE (ROBUST) ------------ */
 
   const sendMessage = async () => {
     if (!input.trim() || !activeChatId || !user || sending) return;
@@ -140,7 +161,7 @@ export default function ChatPage() {
     setSending(true);
 
     try {
-      // 1️⃣ Save user message
+      // 1️⃣ Save user message locally first
       const { data: userMsg } = await supabase
         .from("messages")
         .insert({
@@ -152,22 +173,21 @@ export default function ChatPage() {
         .select()
         .single();
 
-      // ✅ Immediately show user message
-      setMessages(prev => [...prev, userMsg]);
+      if (userMsg) setMessages(prev => [...prev, userMsg]);
 
       // 2️⃣ Call backend
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chat_id: activeChatId,
+          chat_id: activeChatId, // ✅ This ensures backend uses current session
           user_query: userText,
           thinking: thinkingMode,
           output: outputMode,
         }),
       });
 
-      // ✅ FIX: Handle both JSON object and JSON string
+      // 3️⃣ Handle Response (JSON or Text)
       let data;
       const contentType = res.headers.get("content-type");
       
@@ -175,33 +195,23 @@ export default function ChatPage() {
         data = await res.json();
       } else {
         const text = await res.text();
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = { answer: text };
-        }
+        try { data = JSON.parse(text); } catch { data = { answer: text }; }
       }
 
-      console.log("📦 API Response:", data); // Debug log
+      console.log("📦 API Response:", data);
 
-      // ✅ FIXED: Extract answer properly
-      let assistantText;
-      
+      // ✅ Robust Answer Extraction
+      let assistantText = "⚠️ No response.";
       if (typeof data === "string") {
-        // If entire response is a string, try to parse it
-        try {
-          const parsed = JSON.parse(data);
-          assistantText = parsed.answer || data;
-        } catch {
-          assistantText = data;
-        }
+        try { 
+           const parsed = JSON.parse(data); 
+           assistantText = parsed.answer || data;
+        } catch { assistantText = data; }
       } else if (data && typeof data === "object") {
         assistantText = data.answer || JSON.stringify(data);
-      } else {
-        assistantText = "⚠️ No response generated.";
       }
 
-      // 3️⃣ Save assistant message (TEXT ONLY)
+      // 4️⃣ Save assistant message
       const { data: assistantMsg } = await supabase
         .from("messages")
         .insert({
@@ -212,19 +222,16 @@ export default function ChatPage() {
         .select()
         .single();
 
-      // ✅ Immediately show assistant message
-      setMessages(prev => [...prev, assistantMsg]);
+      if (assistantMsg) setMessages(prev => [...prev, assistantMsg]);
 
     } catch (err) {
       console.error("❌ Send message failed:", err);
-      
-      // ✅ Show error message to user
       setMessages(prev => [
         ...prev,
         {
           id: Date.now().toString(),
           role: "assistant",
-          content: "⚠️ Error: Could not get response. Please try again.",
+          content: "⚠️ Connection Error. Please try again.",
           created_at: new Date().toISOString(),
         } as Message,
       ]);
@@ -239,11 +246,12 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  /* ------------ SWITCH CHAT (NEW) ------------ */
+  /* ------------ SWITCH CHAT ------------ */
   
   const switchChat = (chatId: string) => {
     setActiveChatId(chatId);
     localStorage.setItem("activeChatId", chatId);
+    updateUrl(chatId); // ✅ Updates URL immediately
   };
 
   const activeChat =
@@ -254,6 +262,29 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-screen bg-black text-gray-200">
+      
+      {/* SIDEBAR (Simple List for Testing) */}
+      <aside className="w-64 border-r border-white/10 p-4 hidden md:flex flex-col">
+        <button 
+          onClick={() => createNewSession()}
+          className="mb-4 flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg font-medium hover:bg-gray-200"
+        >
+          <Plus size={18} /> New Chat
+        </button>
+        <div className="flex-1 overflow-y-auto space-y-2">
+            {chats.map(chat => (
+                <button
+                    key={chat.id}
+                    onClick={() => switchChat(chat.id)}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm truncate ${
+                        activeChatId === chat.id ? "bg-white/10 text-white" : "text-gray-400 hover:bg-white/5"
+                    }`}
+                >
+                    {chat.title || "Untitled Session"}
+                </button>
+            ))}
+        </div>
+      </aside>
 
       <main className="flex-1 flex flex-col">
 
