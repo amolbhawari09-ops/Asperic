@@ -1,8 +1,6 @@
-import re
 import os
-import json
-from groq import Groq
 from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 
 @dataclass(frozen=True)
@@ -12,158 +10,136 @@ class ReasoningDecision:
     """
     depth: str                 # NONE | LIGHT | STRUCTURED | RIGOROUS
     confidence: float          # 0.0 – 1.0
-    signals: list[str]
+    signals: List[str]
     controller_version: str
 
 
 class ReasoningController:
     """
-    Asperic Reasoning Depth Controller (Hardened)
-    ---------------------------------------------
-    Purpose:
-    - Decide HOW MUCH thinking is required
-    - Never crash the system
-    - Degrades safely if LLM unavailable
+    Asperic Semantic Reasoning Controller (v2.0)
+    --------------------------------------------
+    PURPOSE (UPDATED):
+    - Decide reasoning depth from SEMANTIC STATE
+    - Never rely on keywords
+    - Never hallucinate certainty
+    - Fail safely if semantic data missing
     """
 
-    VERSION = "v1.1-cognitive-depth"
+    VERSION = "v2.0-semantic-depth"
 
     DEPTHS = {"NONE", "LIGHT", "STRUCTURED", "RIGOROUS"}
 
-    # =========================
+    # -------------------------
     # INIT
-    # =========================
+    # -------------------------
     def __init__(self):
-        self.api_key = os.getenv("GROQ_API_KEY")
+        pass  # No API calls needed here anymore
 
-        if not self.api_key:
-            print("⚠️ REASONING: GROQ_API_KEY missing. LLM depth disabled.")
-            self.client = None
-        else:
-            self.client = Groq(api_key=self.api_key)
-
-        self.SCOUT = "meta-llama/llama-4-scout-17b-16e-instruct"
-
-        # Deterministic linguistic cues
-        self.RIGOROUS_TRIGGERS = [
-            "should i", "decide", "architecture", "design",
-            "strategy", "risk", "production", "deploy",
-            "legal", "tax", "finance", "investment",
-            "medical", "diagnosis"
-        ]
-
-        self.STRUCTURED_TRIGGERS = [
-            "how do i", "steps", "process", "compare",
-            "difference", "explain", "analyze"
-        ]
-
-    # =========================
+    # -------------------------
     # PUBLIC ENTRY
-    # =========================
-    def decide(self, query: str) -> ReasoningDecision:
-        signals = []
+    # -------------------------
+    def decide(
+        self,
+        query: str,
+        semantic_profile: Optional[Dict[str, float]] = None
+    ) -> ReasoningDecision:
+        """
+        Decide reasoning depth based on semantic profile.
 
-        # ---------- PHASE 1: FAST HEURISTICS ----------
-        lowered = query.lower()
+        semantic_profile expected keys (0.0–1.0):
+        - confusion
+        - decision_intent
+        - technicality
+        - novelty
+        """
 
-        if self._is_trivial(query):
+        signals: List[str] = []
+
+        # ---------- FAIL SAFE ----------
+        if not semantic_profile or not isinstance(semantic_profile, dict):
             return self._decision(
-                depth="NONE",
-                confidence=0.9,
-                signals=["trivial_query"]
+                depth="LIGHT",
+                confidence=0.4,
+                signals=["fallback:no_semantic_profile"]
             )
 
-        if any(t in lowered for t in self.RIGOROUS_TRIGGERS):
-            signals.append("high_stakes_language")
+        # ---------- EXTRACT SIGNALS ----------
+        confusion = float(semantic_profile.get("confusion", 0.0))
+        decision_intent = float(semantic_profile.get("decision_intent", 0.0))
+        technicality = float(semantic_profile.get("technicality", 0.0))
+        novelty = float(semantic_profile.get("novelty", 0.0))
 
-        if any(t in lowered for t in self.STRUCTURED_TRIGGERS):
-            signals.append("procedural_language")
+        # ---------- SEMANTIC INTERPRETATION ----------
+        if confusion > 0.75:
+            signals.append("semantic:high_confusion")
 
-        # ---------- PHASE 2: LLM ASSESSMENT (OPTIONAL) ----------
-        if self.client:
-            llm_result = self._llm_assess_depth(query)
-        else:
-            llm_result = {}
+        if decision_intent > 0.65:
+            signals.append("semantic:decision_intent")
 
-        depth = llm_result.get("depth", "LIGHT")
-        confidence = llm_result.get("confidence", 0.5)
-        llm_signals = llm_result.get("signals", [])
+        if technicality > 0.7:
+            signals.append("semantic:high_technicality")
 
-        if isinstance(llm_signals, list):
-            signals.extend(llm_signals)
+        if novelty > 0.6:
+            signals.append("semantic:novel_query")
 
-        # ---------- PHASE 3: HARD OVERRIDES ----------
-        if "high_stakes_language" in signals:
-            depth = "RIGOROUS"
-
-        if depth not in self.DEPTHS:
+        # ---------- DEPTH LOGIC (CORE INTELLIGENCE) ----------
+        # 1. Confused users should NOT get deep reasoning
+        if confusion > 0.75:
             depth = "LIGHT"
 
-        confidence = self._clamp(confidence)
+        # 2. Decision-making requires rigor
+        elif decision_intent > 0.65:
+            depth = "RIGOROUS"
+
+        # 3. Novel but understandable topics benefit from structure
+        elif novelty > 0.6 and confusion < 0.4:
+            depth = "STRUCTURED"
+
+        # 4. Low signal = trivial
+        elif max(confusion, decision_intent, novelty, technicality) < 0.25:
+            depth = "NONE"
+
+        # 5. Default safe behavior
+        else:
+            depth = "LIGHT"
+
+        confidence = self._confidence_from_signals(
+            confusion, decision_intent, novelty
+        )
 
         return self._decision(
             depth=depth,
             confidence=confidence,
-            signals=list(set(signals))
+            signals=signals
         )
 
-    # =========================
-    # INTERNAL HELPERS
-    # =========================
-    def _is_trivial(self, query: str) -> bool:
-        short = len(query.split()) <= 5
-        simple_pattern = bool(
-            re.match(r"^(what is|define|meaning of)\b", query.lower())
-        )
-        return short and simple_pattern
+    # -------------------------
+    # INTERNAL
+    # -------------------------
+    def _confidence_from_signals(
+        self,
+        confusion: float,
+        decision_intent: float,
+        novelty: float
+    ) -> float:
+        """
+        Confidence reflects signal clarity, NOT correctness.
+        """
+        clarity = max(decision_intent, novelty, confusion)
+        return round(min(1.0, max(0.4, clarity)), 2)
 
-    def _llm_assess_depth(self, query: str) -> dict:
-        system_msg = (
-            "You are a cognitive complexity classifier.\n"
-            "Decide how much reasoning is REQUIRED to answer the query correctly.\n\n"
-            "Return ONLY JSON:\n"
-            "{\n"
-            "  \"depth\": \"NONE\" | \"LIGHT\" | \"STRUCTURED\" | \"RIGOROUS\",\n"
-            "  \"confidence\": float (0.0 - 1.0),\n"
-            "  \"signals\": [\"decision\", \"analysis\", \"risk\", \"multi_step\"]\n"
-            "}"
-        )
+    def _decision(
+        self,
+        depth: str,
+        confidence: float,
+        signals: List[str]
+    ) -> ReasoningDecision:
+        if depth not in self.DEPTHS:
+            depth = "LIGHT"
 
-        try:
-            completion = self.client.chat.completions.create(
-                model=self.SCOUT,
-                messages=[
-                    {"role": "system", "content": system_msg},
-                    {"role": "user", "content": query}
-                ],
-                temperature=0.0,
-                response_format={"type": "json_object"}
-            )
-
-            data = completion.choices[0].message.content
-            parsed = json.loads(data)
-
-            return {
-                "depth": parsed.get("depth"),
-                "confidence": parsed.get("confidence"),
-                "signals": parsed.get("signals", [])
-            }
-
-        except Exception as e:
-            print(f"⚠️ REASONING: LLM assessment failed: {e}")
-            return {}
-
-    def _decision(self, depth: str, confidence: float, signals: list) -> ReasoningDecision:
         return ReasoningDecision(
             depth=depth,
             confidence=confidence,
             signals=signals,
             controller_version=self.VERSION
         )
-
-    def _clamp(self, value) -> float:
-        try:
-            v = float(value)
-            return max(0.0, min(1.0, round(v, 2)))
-        except Exception:
-            return 0.5
