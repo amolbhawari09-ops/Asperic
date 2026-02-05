@@ -130,39 +130,45 @@ export async function POST(req: Request) {
     clearTimeout(timeout);
 
     if (!backendRes.ok) {
+      console.error("❌ Backend API error:", backendRes.status, backendRes.statusText);
       return NextResponse.json(
         { error: "AI backend failure" },
         { status: 502 }
       );
     }
 
-    /* ---------------- PARSE RESPONSE (FIX) ---------------- */
+    /* ---------------- PARSE RESPONSE ---------------- */
     const backendJson: BackendResponse = await backendRes.json();
 
+    console.log("📦 Backend response:", backendJson); // Debug log
+
     const cleanAnswer =
-      typeof backendJson.answer === "string"
+      typeof backendJson.answer === "string" && backendJson.answer.trim()
         ? backendJson.answer
         : "No answer generated.";
 
-    /* ---------------- SAVE CLEAN ANSWER ---------------- */
+    /* ---------------- SAVE TO DATABASE ---------------- */
     const { error: insertError } = await supabase
       .from("messages")
       .insert({
         chat_id,
         user_id: session.user.id,
         role: "assistant",
-        content: cleanAnswer, // ✅ ONLY TEXT
+        content: cleanAnswer,
       });
 
     if (insertError) {
+      console.error("❌ Database insert error:", insertError);
       return NextResponse.json(
         { error: "Failed to save message" },
         { status: 500 }
       );
     }
 
+    /* ---------------- RETURN ANSWER TO FRONTEND ✅ ---------------- */
     return NextResponse.json(
       {
+        answer: cleanAnswer,  // ✅ THIS WAS MISSING!
         success: true,
         requestId,
         meta: {
@@ -175,7 +181,7 @@ export async function POST(req: Request) {
     );
 
   } catch (err) {
-    console.error("🔥 API ROUTE CRASH", err);
+    console.error("🔥 API ROUTE CRASH:", err);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
